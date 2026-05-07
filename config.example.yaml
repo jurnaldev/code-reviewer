@@ -1,0 +1,21 @@
+gitlab:
+  base_url: https://gitlab.example.com
+  token: env:GITLAB_TOKEN
+llm:
+  provider: anthropic
+  model: claude-sonnet-4-6
+  api_key: env:ANTHROPIC_API_KEY
+  base_url: ""
+review:
+  max_file_tokens: 8000
+  max_mr_tokens: 200000
+  max_concurrent_chunks: 4
+  job_timeout: 10m
+  llm_call_timeout: 90s
+  ignore_globs:
+    - "**/*.lock"
+    - "vendor/**"
+    - "node_modules/**"
+    - "**/*.gen.*"
+    - "**/*.min.*"
+  deep_mode_default: false
