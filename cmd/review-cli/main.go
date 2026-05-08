@@ -36,17 +36,14 @@ func main() {
 	}
 	gl := gitlab.NewRESTClient(cfg.GitLab.BaseURL, cfg.GitLab.Token, hc)
 
-	var prov llm.Provider
-	switch cfg.LLM.Provider {
-	case "anthropic":
-		prov = llm.NewAnthropic(llm.AnthropicConfig{
-			APIKey:  cfg.LLM.APIKey,
-			Model:   cfg.LLM.Model,
-			BaseURL: cfg.LLM.BaseURL,
-			HTTP:    hc,
-		})
-	default:
-		fmt.Fprintln(os.Stderr, "provider not yet supported in Plan 1:", cfg.LLM.Provider)
+	prov, err := llm.NewProvider(llm.ProviderConfig{
+		Provider: cfg.LLM.Provider,
+		Model:    cfg.LLM.Model,
+		APIKey:   cfg.LLM.APIKey,
+		BaseURL:  cfg.LLM.BaseURL,
+	}, hc)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "llm provider:", err)
 		os.Exit(1)
 	}
 
