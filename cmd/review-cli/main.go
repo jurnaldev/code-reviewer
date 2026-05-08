@@ -1,7 +1,67 @@
 package main
 
-import "fmt"
+import (
+	"context"
+	"flag"
+	"fmt"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/fahmi/gitlab-mr-review-bot/internal/config"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/gitlab"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/llm"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/review"
+)
 
 func main() {
-	fmt.Println("review-cli placeholder; wired in Task 13")
+	cfgPath := flag.String("config", "config.yaml", "path to config")
+	flag.Parse()
+	if flag.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "usage: review-cli --config FILE <mr-url>")
+		os.Exit(2)
+	}
+	mrURL := flag.Arg(0)
+
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config:", err)
+		os.Exit(1)
+	}
+
+	hc := &http.Client{Timeout: 60 * time.Second}
+	gl := gitlab.NewRESTClient(cfg.GitLab.BaseURL, cfg.GitLab.Token, hc)
+
+	var prov llm.Provider
+	switch cfg.LLM.Provider {
+	case "anthropic":
+		prov = llm.NewAnthropic(llm.AnthropicConfig{
+			APIKey:  cfg.LLM.APIKey,
+			Model:   cfg.LLM.Model,
+			BaseURL: cfg.LLM.BaseURL,
+			HTTP:    hc,
+		})
+	default:
+		fmt.Fprintln(os.Stderr, "provider not yet supported in Plan 1:", cfg.LLM.Provider)
+		os.Exit(1)
+	}
+
+	o := review.New(review.Config{
+		GitLab:        gl,
+		Provider:      prov,
+		MaxFileTokens: cfg.Review.MaxFileTokens,
+		MaxMRTokens:   cfg.Review.MaxMRTokens,
+		MaxConcurrent: cfg.Review.MaxConcurrentChunks,
+		IgnoreGlobs:   cfg.Review.IgnoreGlobs,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Review.JobTimeout)
+	defer cancel()
+
+	res, err := o.Run(ctx, mrURL)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "review failed:", err)
+		os.Exit(1)
+	}
+	fmt.Printf("posted=%d skipped=%d findings=%d url=%s\n", res.Posted, res.Skipped, res.Findings, res.WebURL)
 }
