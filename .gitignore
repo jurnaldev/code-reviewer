@@ -5,3 +5,5 @@
 .env
 config.yaml
 .DS_Store
+/bot
+/review-cli

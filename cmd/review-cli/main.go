@@ -10,6 +10,7 @@ import (
 
 	"github.com/fahmi/gitlab-mr-review-bot/internal/config"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/gitlab"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/httpretry"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/llm"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/review"
 )
@@ -29,7 +30,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	hc := &http.Client{Timeout: 60 * time.Second}
+	hc := &http.Client{
+		Timeout:   60 * time.Second,
+		Transport: &httpretry.Transport{Inner: http.DefaultTransport, Max: 3, Base: 500 * time.Millisecond},
+	}
 	gl := gitlab.NewRESTClient(cfg.GitLab.BaseURL, cfg.GitLab.Token, hc)
 
 	var prov llm.Provider
