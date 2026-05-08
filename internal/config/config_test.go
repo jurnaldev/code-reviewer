@@ -12,10 +12,15 @@ import (
 func TestLoad_DefaultsAndEnvInterp(t *testing.T) {
 	t.Setenv("GITLAB_TOKEN", "glpat-abc")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-xyz")
+	t.Setenv("DISCORD_TOKEN", "dt")
+	t.Setenv("DISCORD_APP_ID", "da")
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "c.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(`
+discord:
+  token: env:DISCORD_TOKEN
+  app_id: env:DISCORD_APP_ID
 gitlab:
   base_url: https://gl.example.com
   token: env:GITLAB_TOKEN
@@ -46,6 +51,7 @@ func TestLoad_MissingEnvFails(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "c.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(`
+discord: {token: x, app_id: y}
 gitlab:
   base_url: https://x
   token: env:NOT_SET_VAR_XYZ
@@ -64,6 +70,7 @@ func TestLoad_RejectsUnknownProvider(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "c.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(`
+discord: {token: x, app_id: y}
 gitlab: {base_url: x, token: t}
 llm: {provider: bogus, model: m, api_key: k}
 `), 0644))
@@ -71,4 +78,46 @@ llm: {provider: bogus, model: m, api_key: k}
 	_, err := Load(path)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "provider")
+}
+
+func TestLoad_DiscordRequired(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "g")
+	t.Setenv("ANTHROPIC_API_KEY", "k")
+	t.Setenv("DISCORD_TOKEN", "dt")
+	t.Setenv("DISCORD_APP_ID", "did")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+discord:
+  token: env:DISCORD_TOKEN
+  app_id: env:DISCORD_APP_ID
+  guild_id: ""
+  allowed_user_ids: ["alice"]
+gitlab: {base_url: https://gl, token: env:GITLAB_TOKEN}
+llm: {provider: anthropic, model: m, api_key: env:ANTHROPIC_API_KEY}
+`), 0644))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, "dt", cfg.Discord.Token)
+	require.Equal(t, "did", cfg.Discord.AppID)
+	require.Equal(t, []string{"alice"}, cfg.Discord.AllowedUserIDs)
+}
+
+func TestLoad_DiscordTokenRequired(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "g")
+	t.Setenv("ANTHROPIC_API_KEY", "k")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+discord: {token: "", app_id: did}
+gitlab: {base_url: https://gl, token: env:GITLAB_TOKEN}
+llm: {provider: anthropic, model: m, api_key: env:ANTHROPIC_API_KEY}
+`), 0644))
+
+	_, err := Load(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "discord.token")
 }

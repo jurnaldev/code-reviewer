@@ -10,14 +10,23 @@ import (
 )
 
 type Config struct {
-	GitLab GitLab `yaml:"gitlab"`
-	LLM    LLM    `yaml:"llm"`
-	Review Review `yaml:"review"`
+	Discord Discord `yaml:"discord"`
+	GitLab  GitLab  `yaml:"gitlab"`
+	LLM     LLM     `yaml:"llm"`
+	Review  Review  `yaml:"review"`
 }
 
 type GitLab struct {
 	BaseURL string `yaml:"base_url"`
 	Token   string `yaml:"token"`
+}
+
+type Discord struct {
+	Token          string   `yaml:"token"`
+	AppID          string   `yaml:"app_id"`
+	GuildID        string   `yaml:"guild_id"`
+	AllowedUserIDs []string `yaml:"allowed_user_ids"`
+	AllowedRoleIDs []string `yaml:"allowed_role_ids"`
 }
 
 type LLM struct {
@@ -60,7 +69,7 @@ func Load(path string) (*Config, error) {
 }
 
 func interpEnvFields(c *Config) error {
-	for _, p := range []*string{&c.GitLab.Token, &c.LLM.APIKey} {
+	for _, p := range []*string{&c.GitLab.Token, &c.LLM.APIKey, &c.Discord.Token, &c.Discord.AppID} {
 		v, err := interp(*p)
 		if err != nil {
 			return err
@@ -102,6 +111,12 @@ func applyDefaults(c *Config) {
 }
 
 func validate(c *Config) error {
+	if c.Discord.Token == "" {
+		return fmt.Errorf("discord.token required")
+	}
+	if c.Discord.AppID == "" {
+		return fmt.Errorf("discord.app_id required")
+	}
 	if c.GitLab.BaseURL == "" {
 		return fmt.Errorf("gitlab.base_url required")
 	}

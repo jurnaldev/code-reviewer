@@ -1,3 +1,9 @@
+discord:
+  token: env:DISCORD_TOKEN
+  app_id: env:DISCORD_APP_ID
+  guild_id: ""           # optional: register commands in a single guild for instant rollout
+  allowed_user_ids: []   # empty => allow everyone
+  allowed_role_ids: []
 gitlab:
   base_url: https://gitlab.example.com
   token: env:GITLAB_TOKEN
