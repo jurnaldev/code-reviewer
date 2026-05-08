@@ -121,7 +121,7 @@ func (o *Orchestrator) RunWithProgress(ctx context.Context, mrURL string, progre
 	var (
 		mu       sync.Mutex
 		findings []llm.Finding
-		errsAny  error
+		failed   int
 		done     int
 	)
 	var wg sync.WaitGroup
@@ -143,7 +143,7 @@ func (o *Orchestrator) RunWithProgress(ctx context.Context, mrURL string, progre
 			done++
 			emit("reviewing", fmt.Sprintf("%d/%d chunks reviewed", done, total))
 			if err != nil {
-				errsAny = err
+				failed++
 				return
 			}
 			for _, f := range resp.Findings {
@@ -167,6 +167,10 @@ func (o *Orchestrator) RunWithProgress(ctx context.Context, mrURL string, progre
 	}
 
 	agg := Aggregate(findings)
+	if failed > 0 {
+		banner := fmt.Sprintf("> _%d of %d chunks failed to review; results may be incomplete._\n\n", failed, total)
+		agg.SummaryBody = banner + agg.SummaryBody
+	}
 
 	emit("posting", "posting summary")
 	if err := o.cfg.GitLab.PostNote(ctx, ref.ProjectPath, ref.MRIID, agg.SummaryBody); err != nil {
@@ -196,7 +200,6 @@ func (o *Orchestrator) RunWithProgress(ctx context.Context, mrURL string, progre
 		}
 		posted++
 	}
-	_ = errsAny
 
 	emit("done", fmt.Sprintf("posted=%d skipped=%d findings=%d", posted, skipped, len(agg.Findings)))
 

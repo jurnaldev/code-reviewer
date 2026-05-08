@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -147,4 +148,26 @@ func TestOrchestrator_RunWithProgress_EmitsStages(t *testing.T) {
 	require.Contains(t, stages, "reviewing")
 	require.Contains(t, stages, "posting")
 	require.Equal(t, "done", stages[len(stages)-1])
+}
+
+type failingProvider struct{}
+
+func (failingProvider) Name() string { return "failing" }
+func (failingProvider) Review(ctx context.Context, req llm.ReviewRequest) (llm.ReviewResponse, error) {
+	return llm.ReviewResponse{}, errors.New("malformed")
+}
+
+func TestOrchestrator_Run_ReportsChunkFailures(t *testing.T) {
+	gl := &fakeGL{}
+	o := New(Config{
+		GitLab:        gl,
+		Provider:      failingProvider{},
+		MaxFileTokens: 4000,
+		MaxMRTokens:   200000,
+		MaxConcurrent: 1,
+	})
+	_, err := o.Run(context.Background(), "https://gl/grp/proj/-/merge_requests/9")
+	require.NoError(t, err)
+	require.Len(t, gl.notes, 1)
+	require.Contains(t, gl.notes[0], "failed to review")
 }
