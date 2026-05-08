@@ -1,0 +1,16 @@
+diff --git a/a.go b/a.go
+index 1111111..2222222 100644
+--- a/a.go
++++ b/a.go
+@@ -1,2 +1,3 @@
+ package a
+-var A = 1
++var A = 2
++var B = 3
+diff --git a/b.go b/b.go
+index 3333333..4444444 100644
+--- a/b.go
++++ b/b.go
+@@ -1,1 +1,1 @@
+-package x
++package b
