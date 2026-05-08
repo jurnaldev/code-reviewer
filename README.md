@@ -15,10 +15,11 @@ Automated GitLab merge-request reviewer powered by an LLM.
    ```
 7. In any channel the bot can see, run `/review url:<gitlab-mr-url>`.
 
-The bot supports three providers via `llm.provider` in `config.yaml`:
+The bot supports four providers via `llm.provider` in `config.yaml`:
 - `anthropic` (default): set `ANTHROPIC_API_KEY`. Uses prompt caching.
 - `openai`: set `OPENAI_API_KEY`. Uses Chat Completions with JSON-object response format.
 - `ollama`: no API key needed; defaults to `http://localhost:11434`. Override with `llm.base_url`.
+- `openrouter`: set `OPENROUTER_API_KEY` as `llm.api_key`. Defaults to `https://openrouter.ai/api`. Use OpenRouter slugs like `openai/gpt-4o` or `anthropic/claude-3.5-sonnet` for `llm.model`. Optionally set `llm.referer` and `llm.title` for app ranking. JSON mode is not sent (works across all OR models); `ParseFindings` tolerates prose-wrapped JSON.
 
 ## Smoke test
 

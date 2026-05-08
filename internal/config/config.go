@@ -34,6 +34,8 @@ type LLM struct {
 	Model    string `yaml:"model"`
 	APIKey   string `yaml:"api_key"`
 	BaseURL  string `yaml:"base_url"`
+	Referer  string `yaml:"referer"` // openrouter HTTP-Referer
+	Title    string `yaml:"title"`   // openrouter X-Title
 }
 
 type Review struct {
@@ -46,7 +48,7 @@ type Review struct {
 	DeepModeDefault     bool          `yaml:"deep_mode_default"`
 }
 
-var allowedProviders = map[string]bool{"anthropic": true, "openai": true, "ollama": true}
+var allowedProviders = map[string]bool{"anthropic": true, "openai": true, "ollama": true, "openrouter": true}
 
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
@@ -124,7 +126,7 @@ func validate(c *Config) error {
 		return fmt.Errorf("gitlab.token required")
 	}
 	if !allowedProviders[c.LLM.Provider] {
-		return fmt.Errorf("llm.provider %q not in {anthropic, openai, ollama}", c.LLM.Provider)
+		return fmt.Errorf("llm.provider %q not in {anthropic, openai, ollama, openrouter}", c.LLM.Provider)
 	}
 	if c.LLM.Model == "" {
 		return fmt.Errorf("llm.model required")

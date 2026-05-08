@@ -41,6 +41,8 @@ func main() {
 		Model:    cfg.LLM.Model,
 		APIKey:   cfg.LLM.APIKey,
 		BaseURL:  cfg.LLM.BaseURL,
+		Referer:  cfg.LLM.Referer,
+		Title:    cfg.LLM.Title,
 	}, hc)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "llm provider:", err)
