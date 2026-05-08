@@ -123,3 +123,28 @@ func TestOrchestrator_Run_BadURL(t *testing.T) {
 	_, err := o.Run(context.Background(), "not a url")
 	require.Error(t, err)
 }
+
+func TestOrchestrator_RunWithProgress_EmitsStages(t *testing.T) {
+	gl := &fakeGL{}
+	prov := &fakeProvider{findings: []llm.Finding{
+		{Severity: "minor", Category: "style", File: "a.go", Line: 1, Message: "m"},
+	}}
+	o := New(Config{
+		GitLab:        gl,
+		Provider:      prov,
+		MaxFileTokens: 4000,
+		MaxMRTokens:   200000,
+		MaxConcurrent: 1,
+	})
+
+	var stages []string
+	progress := func(stage, msg string) {
+		stages = append(stages, stage)
+	}
+	_, err := o.RunWithProgress(context.Background(), "https://gl/grp/proj/-/merge_requests/9", progress)
+	require.NoError(t, err)
+	require.Contains(t, stages, "fetching")
+	require.Contains(t, stages, "reviewing")
+	require.Contains(t, stages, "posting")
+	require.Equal(t, "done", stages[len(stages)-1])
+}

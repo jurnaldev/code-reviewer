@@ -42,11 +42,25 @@ type RunResult struct {
 	Counts   map[string]int
 }
 
+type ProgressFn func(stage, msg string)
+
 func (o *Orchestrator) Run(ctx context.Context, mrURL string) (*RunResult, error) {
+	return o.RunWithProgress(ctx, mrURL, nil)
+}
+
+func (o *Orchestrator) RunWithProgress(ctx context.Context, mrURL string, progress ProgressFn) (*RunResult, error) {
+	emit := func(stage, msg string) {
+		if progress != nil {
+			progress(stage, msg)
+		}
+	}
+
 	ref, err := gitlab.ParseURL(mrURL)
 	if err != nil {
 		return nil, err
 	}
+
+	emit("fetching", "fetching MR")
 	mr, changes, err := o.cfg.GitLab.GetMRWithChanges(ctx, ref.ProjectPath, ref.MRIID)
 	if err != nil {
 		return nil, fmt.Errorf("fetch MR: %w", err)
@@ -70,7 +84,6 @@ func (o *Orchestrator) Run(ctx context.Context, mrURL string) (*RunResult, error
 		if ignored || classifier.IsLockfile(ch.NewPath) {
 			continue
 		}
-		// Wrap the bare diff hunks in a synthetic file header so parser succeeds.
 		full := fmt.Sprintf("diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n%s",
 			ch.OldPath, ch.NewPath, ch.OldPath, ch.NewPath, ch.Diff)
 		pd, err := diff.Parse(full)
@@ -102,14 +115,17 @@ func (o *Orchestrator) Run(ctx context.Context, mrURL string) (*RunResult, error
 		}
 	}
 
-	// Run LLM calls with bounded concurrency.
+	emit("reviewing", fmt.Sprintf("reviewing %d chunks", len(jobs)))
+
 	sem := make(chan struct{}, o.cfg.MaxConcurrent)
 	var (
 		mu       sync.Mutex
 		findings []llm.Finding
 		errsAny  error
+		done     int
 	)
 	var wg sync.WaitGroup
+	total := len(jobs)
 	for _, j := range jobs {
 		j := j
 		wg.Add(1)
@@ -124,8 +140,10 @@ func (o *Orchestrator) Run(ctx context.Context, mrURL string) (*RunResult, error
 			})
 			mu.Lock()
 			defer mu.Unlock()
+			done++
+			emit("reviewing", fmt.Sprintf("%d/%d chunks reviewed", done, total))
 			if err != nil {
-				errsAny = err // last error wins; partial success still possible
+				errsAny = err
 				return
 			}
 			for _, f := range resp.Findings {
@@ -138,7 +156,6 @@ func (o *Orchestrator) Run(ctx context.Context, mrURL string) (*RunResult, error
 	}
 	wg.Wait()
 
-	// Build line-validity map per file from all jobs.
 	lineMap := map[string]map[int]bool{}
 	for _, j := range jobs {
 		if _, ok := lineMap[j.path]; !ok {
@@ -151,7 +168,7 @@ func (o *Orchestrator) Run(ctx context.Context, mrURL string) (*RunResult, error
 
 	agg := Aggregate(findings)
 
-	// Summary note first.
+	emit("posting", "posting summary")
 	if err := o.cfg.GitLab.PostNote(ctx, ref.ProjectPath, ref.MRIID, agg.SummaryBody); err != nil {
 		return nil, fmt.Errorf("post summary: %w", err)
 	}
@@ -179,7 +196,10 @@ func (o *Orchestrator) Run(ctx context.Context, mrURL string) (*RunResult, error
 		}
 		posted++
 	}
-	_ = errsAny // surfacing partial errors is a future improvement
+	_ = errsAny
+
+	emit("done", fmt.Sprintf("posted=%d skipped=%d findings=%d", posted, skipped, len(agg.Findings)))
+
 	return &RunResult{
 		Findings: len(agg.Findings),
 		Posted:   posted,
