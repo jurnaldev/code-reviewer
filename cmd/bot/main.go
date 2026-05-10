@@ -17,6 +17,10 @@ import (
 	"github.com/fahmi/gitlab-mr-review-bot/internal/httpretry"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/jobs"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/llm"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/memory"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/memory/mem9"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/memory/mirror"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/memory/reporules"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/review"
 )
 
@@ -49,6 +53,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	memClient := buildMemory(cfg.Memory, gl, prov)
+
 	o := review.New(review.Config{
 		GitLab:         gl,
 		Provider:       prov,
@@ -57,6 +63,7 @@ func main() {
 		MaxConcurrent:  cfg.Review.MaxConcurrentChunks,
 		LLMCallTimeout: cfg.Review.LLMCallTimeout,
 		IgnoreGlobs:    cfg.Review.IgnoreGlobs,
+		Memory:         memClient,
 	})
 
 	tracker := jobs.New()
@@ -85,6 +92,7 @@ func main() {
 		},
 		TickEvery:  5 * time.Second,
 		JobTimeout: cfg.Review.JobTimeout,
+		Memory:     memClient,
 	}
 
 	sess.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -113,6 +121,56 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 	fmt.Println("shutting down")
+}
+
+func buildMemory(cfg config.Memory, gl gitlab.Client, prov llm.Provider) memory.Client {
+	if !cfg.Enabled {
+		return memory.Noop{}
+	}
+	composite := &memory.Composite{
+		TokenBudget: cfg.RecallTokenBudget,
+	}
+
+	var sources []memory.Source
+
+	if cfg.Mem9.Enabled {
+		mem9c := mem9.New(mem9.Config{
+			BaseURL: cfg.Mem9.BaseURL,
+			APIKey:  cfg.Mem9.APIKey,
+			Timeout: cfg.HTTPTimeout,
+		})
+		mem9src := memory.NewMem9Source(mem9c, memory.Mem9Tuning{
+			ConventionsTopK: cfg.Mem9.ConventionsTopK,
+			SummariesTopK:   cfg.Mem9.SummariesTopK,
+		})
+		composite.Mem9 = mem9src
+		sources = append(sources, mem9src)
+	}
+	if cfg.RepoRules.Enabled {
+		sources = append(sources, reporules.New(gl, cfg.RepoRules.Path))
+	}
+	if cfg.Mirror.Enabled {
+		var mwriter mirror.Mem9Writer
+		if composite.Mem9 != nil {
+			mwriter = &mirrorMem9Adapter{m: composite.Mem9}
+		}
+		mr := mirror.NewSource(cfg.Mirror.Dir, mwriter)
+		composite.Mirror = mr
+		sources = append(sources, mr)
+	}
+	composite.Sources = sources
+	composite.Extractor = memory.NewExtractor(prov)
+	return composite
+}
+
+type mirrorMem9Adapter struct{ m memory.Mem9Adapter }
+
+func (a *mirrorMem9Adapter) Create(ctx context.Context, content string, k memory.Kind, project string) (string, error) {
+	return a.m.Create(ctx, content, k, project)
+}
+
+func (a *mirrorMem9Adapter) Update(ctx context.Context, id, content string) error {
+	return a.m.Update(ctx, id, content)
 }
 
 func toSet(items []string) map[string]bool {

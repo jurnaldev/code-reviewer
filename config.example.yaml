@@ -27,3 +27,20 @@ review:
     - "**/*.gen.*"
     - "**/*.min.*"
   deep_mode_default: false
+
+memory:
+  enabled: false                          # set true to opt in
+  recall_token_budget: 2000
+  http_timeout: 10s
+  mem9:
+    enabled: true
+    base_url: https://api.mem9.ai         # or http://localhost:8080
+    api_key: env:MEM9_API_KEY
+    conventions_top_k: 20
+    summaries_top_k: 5
+  repo_rules:
+    enabled: true
+    path: .review/rules.md
+  mirror:
+    enabled: true
+    dir: ~/.cache/gitlab-mr-bot/memory
