@@ -1,0 +1,9 @@
+/bin
+/dist
+*.test
+*.out
+.env
+config.yaml
+.DS_Store
+/bot
+/review-cli
