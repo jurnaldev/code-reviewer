@@ -14,6 +14,7 @@ type Config struct {
 	GitLab  GitLab  `yaml:"gitlab"`
 	LLM     LLM     `yaml:"llm"`
 	Review  Review  `yaml:"review"`
+	Memory  Memory  `yaml:"memory"`
 }
 
 type GitLab struct {
@@ -48,6 +49,33 @@ type Review struct {
 	DeepModeDefault     bool          `yaml:"deep_mode_default"`
 }
 
+type Memory struct {
+	Enabled           bool          `yaml:"enabled"`
+	RecallTokenBudget int           `yaml:"recall_token_budget"`
+	HTTPTimeout       time.Duration `yaml:"http_timeout"`
+	Mem9              Mem9          `yaml:"mem9"`
+	RepoRules         RepoRules     `yaml:"repo_rules"`
+	Mirror            Mirror        `yaml:"mirror"`
+}
+
+type Mem9 struct {
+	Enabled         bool   `yaml:"enabled"`
+	BaseURL         string `yaml:"base_url"`
+	APIKey          string `yaml:"api_key"`
+	ConventionsTopK int    `yaml:"conventions_top_k"`
+	SummariesTopK   int    `yaml:"summaries_top_k"`
+}
+
+type RepoRules struct {
+	Enabled bool   `yaml:"enabled"`
+	Path    string `yaml:"path"`
+}
+
+type Mirror struct {
+	Enabled bool   `yaml:"enabled"`
+	Dir     string `yaml:"dir"`
+}
+
 var allowedProviders = map[string]bool{"anthropic": true, "openai": true, "ollama": true, "openrouter": true}
 
 func Load(path string) (*Config, error) {
@@ -71,7 +99,7 @@ func Load(path string) (*Config, error) {
 }
 
 func interpEnvFields(c *Config) error {
-	for _, p := range []*string{&c.GitLab.Token, &c.LLM.APIKey, &c.Discord.Token, &c.Discord.AppID} {
+	for _, p := range []*string{&c.GitLab.Token, &c.LLM.APIKey, &c.Discord.Token, &c.Discord.AppID, &c.Memory.Mem9.APIKey} {
 		v, err := interp(*p)
 		if err != nil {
 			return err
@@ -110,6 +138,31 @@ func applyDefaults(c *Config) {
 	if c.Review.LLMCallTimeout == 0 {
 		c.Review.LLMCallTimeout = 90 * time.Second
 	}
+	if c.Memory.Enabled {
+		if c.Memory.RecallTokenBudget == 0 {
+			c.Memory.RecallTokenBudget = 2000
+		}
+		if c.Memory.HTTPTimeout == 0 {
+			c.Memory.HTTPTimeout = 10 * time.Second
+		}
+		if c.Memory.Mem9.Enabled {
+			if c.Memory.Mem9.BaseURL == "" {
+				c.Memory.Mem9.BaseURL = "https://api.mem9.ai"
+			}
+			if c.Memory.Mem9.ConventionsTopK == 0 {
+				c.Memory.Mem9.ConventionsTopK = 20
+			}
+			if c.Memory.Mem9.SummariesTopK == 0 {
+				c.Memory.Mem9.SummariesTopK = 5
+			}
+		}
+		if c.Memory.RepoRules.Enabled && c.Memory.RepoRules.Path == "" {
+			c.Memory.RepoRules.Path = ".review/rules.md"
+		}
+		if c.Memory.Mirror.Enabled && c.Memory.Mirror.Dir == "" {
+			c.Memory.Mirror.Dir = "~/.cache/gitlab-mr-bot/memory"
+		}
+	}
 }
 
 func validate(c *Config) error {
@@ -133,6 +186,9 @@ func validate(c *Config) error {
 	}
 	if c.LLM.APIKey == "" && c.LLM.Provider != "ollama" {
 		return fmt.Errorf("llm.api_key required for provider %q", c.LLM.Provider)
+	}
+	if c.Memory.Enabled && c.Memory.Mem9.Enabled && c.Memory.Mem9.APIKey == "" {
+		return fmt.Errorf("memory.mem9.api_key required when memory.mem9.enabled is true")
 	}
 	return nil
 }

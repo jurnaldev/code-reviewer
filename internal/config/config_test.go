@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -120,4 +121,114 @@ llm: {provider: anthropic, model: m, api_key: env:ANTHROPIC_API_KEY}
 	_, err := Load(path)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "discord.token")
+}
+
+func TestLoad_MemoryBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `
+discord:
+  token: t
+  app_id: a
+gitlab:
+  base_url: https://g
+  token: gt
+llm:
+  provider: anthropic
+  model: m
+  api_key: k
+memory:
+  enabled: true
+  recall_token_budget: 1500
+  http_timeout: 5s
+  mem9:
+    enabled: true
+    base_url: https://api.mem9.ai
+    api_key: mk
+    conventions_top_k: 30
+    summaries_top_k: 4
+  repo_rules:
+    enabled: true
+    path: .review/rules.md
+  mirror:
+    enabled: true
+    dir: ~/.cache/gitlab-mr-bot/memory
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !c.Memory.Enabled {
+		t.Fatalf("expected memory.enabled=true")
+	}
+	if c.Memory.RecallTokenBudget != 1500 {
+		t.Fatalf("budget got %d", c.Memory.RecallTokenBudget)
+	}
+	if c.Memory.HTTPTimeout != 5*time.Second {
+		t.Fatalf("timeout got %v", c.Memory.HTTPTimeout)
+	}
+	if !c.Memory.Mem9.Enabled || c.Memory.Mem9.APIKey != "mk" {
+		t.Fatalf("mem9 sub-block not parsed: %+v", c.Memory.Mem9)
+	}
+	if c.Memory.Mem9.ConventionsTopK != 30 || c.Memory.Mem9.SummariesTopK != 4 {
+		t.Fatalf("topk got %d/%d", c.Memory.Mem9.ConventionsTopK, c.Memory.Mem9.SummariesTopK)
+	}
+	if c.Memory.RepoRules.Path != ".review/rules.md" {
+		t.Fatalf("repo_rules.path got %q", c.Memory.RepoRules.Path)
+	}
+	if c.Memory.Mirror.Dir != "~/.cache/gitlab-mr-bot/memory" {
+		t.Fatalf("mirror.dir got %q", c.Memory.Mirror.Dir)
+	}
+}
+
+func TestLoad_MemoryBlock_DefaultsAndDisabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `
+discord:
+  token: t
+  app_id: a
+gitlab:
+  base_url: https://g
+  token: gt
+llm:
+  provider: anthropic
+  model: m
+  api_key: k
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Memory.Enabled {
+		t.Fatalf("memory should default disabled when block absent")
+	}
+}
+
+func TestLoad_MemoryBlock_RejectsMem9EnabledWithoutKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `
+discord: {token: t, app_id: a}
+gitlab: {base_url: https://g, token: gt}
+llm: {provider: anthropic, model: m, api_key: k}
+memory:
+  enabled: true
+  mem9:
+    enabled: true
+    base_url: https://api.mem9.ai
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "memory.mem9.api_key") {
+		t.Fatalf("expected api_key validation error, got %v", err)
+	}
 }
