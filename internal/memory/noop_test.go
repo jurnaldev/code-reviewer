@@ -5,6 +5,9 @@ import (
 	"testing"
 )
 
+// Verify Noop implements Client at compile time.
+var _ Client = Noop{}
+
 func TestNoop_RecallReturnsEmpty(t *testing.T) {
 	c := Noop{}
 	res, err := c.Recall(context.Background(), MRRef{Project: "g/r"})
