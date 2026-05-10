@@ -12,6 +12,7 @@ import (
 	"github.com/fahmi/gitlab-mr-review-bot/internal/diff"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/gitlab"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/llm"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/memory"
 )
 
 // postTimeout caps each GitLab post (summary/discussion). Detached from job
@@ -27,6 +28,7 @@ type Config struct {
 	MaxConcurrent  int
 	LLMCallTimeout time.Duration
 	IgnoreGlobs    []string
+	Memory         memory.Client
 }
 
 type Orchestrator struct{ cfg Config }
@@ -40,6 +42,9 @@ func New(cfg Config) *Orchestrator {
 	}
 	if cfg.LLMCallTimeout <= 0 {
 		cfg.LLMCallTimeout = 90 * time.Second
+	}
+	if cfg.Memory == nil {
+		cfg.Memory = memory.Noop{}
 	}
 	return &Orchestrator{cfg: cfg}
 }
@@ -75,6 +80,27 @@ func (o *Orchestrator) RunWithProgress(ctx context.Context, mrURL string, progre
 	if err != nil {
 		return nil, fmt.Errorf("fetch MR: %w", err)
 	}
+
+	files := make([]string, 0, len(changes))
+	for _, ch := range changes {
+		files = append(files, ch.NewPath)
+	}
+	mrRef := memory.MRRef{
+		Project:   ref.ProjectPath,
+		IID:       ref.MRIID,
+		Title:     mr.Title,
+		HeadSHA:   mr.HeadSHA,
+		WebURL:    mr.WebURL,
+		TargetRef: mr.TargetBranch,
+		Files:     files,
+	}
+
+	emit("recalling", "loading memory")
+	rec, recErr := o.cfg.Memory.Recall(ctx, mrRef)
+	if recErr != nil {
+		log.Printf("review: memory recall failed: %v", recErr)
+	}
+	fileContext := rec.FileContext
 
 	type job struct {
 		path        string
@@ -161,6 +187,7 @@ dispatch:
 				SystemPrompt: o.cfg.SystemPrompt,
 				FilePath:     j.path,
 				DiffChunk:    j.chunk.DiffText,
+				FileContext:  fileContext,
 			})
 			mu.Lock()
 			defer mu.Unlock()
@@ -205,6 +232,21 @@ dispatch:
 	if err != nil {
 		return nil, fmt.Errorf("post summary: %w", err)
 	}
+
+	memFindings := make([]memory.Finding, 0, len(agg.Findings))
+	for _, f := range agg.Findings {
+		memFindings = append(memFindings, memory.Finding{
+			Severity: f.Severity, Category: f.Category,
+			File: f.File, Line: f.Line, Message: f.Message,
+		})
+	}
+	go func() {
+		wctx, wcancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer wcancel()
+		if werr := o.cfg.Memory.Write(wctx, mrRef, memFindings, ""); werr != nil {
+			log.Printf("review: memory write failed: %v", werr)
+		}
+	}()
 
 	posted := 0
 	skipped := 0

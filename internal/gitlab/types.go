@@ -1,12 +1,13 @@
 package gitlab
 
 type MR struct {
-	IID      int    `json:"iid"`
-	Title    string `json:"title"`
-	WebURL   string `json:"web_url"`
-	BaseSHA  string
-	StartSHA string
-	HeadSHA  string
+	IID          int    `json:"iid"`
+	Title        string `json:"title"`
+	WebURL       string `json:"web_url"`
+	BaseSHA      string
+	StartSHA     string
+	HeadSHA      string
+	TargetBranch string
 }
 
 type FileChange struct {

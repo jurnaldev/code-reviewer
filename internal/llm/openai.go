@@ -61,7 +61,11 @@ type openaiResp struct {
 }
 
 func (o *OpenAI) Review(ctx context.Context, req ReviewRequest) (ReviewResponse, error) {
-	user := fmt.Sprintf("File: %s\n\nDiff:\n%s", req.FilePath, req.DiffChunk)
+	user := ""
+	if req.FileContext != "" {
+		user = req.FileContext + "\n\n"
+	}
+	user += fmt.Sprintf("File: %s\n\nDiff:\n%s", req.FilePath, req.DiffChunk)
 	msgs := []openaiMessage{
 		{Role: "system", Content: req.SystemPrompt},
 		{Role: "user", Content: user},

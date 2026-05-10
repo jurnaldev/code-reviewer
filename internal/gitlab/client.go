@@ -69,10 +69,11 @@ func (c *RESTClient) doWithHeader(ctx context.Context, method, path string, body
 }
 
 type mrEnvelope struct {
-	IID      int    `json:"iid"`
-	Title    string `json:"title"`
-	WebURL   string `json:"web_url"`
-	DiffRefs struct {
+	IID          int    `json:"iid"`
+	Title        string `json:"title"`
+	WebURL       string `json:"web_url"`
+	TargetBranch string `json:"target_branch"`
+	DiffRefs     struct {
 		BaseSHA  string `json:"base_sha"`
 		StartSHA string `json:"start_sha"`
 		HeadSHA  string `json:"head_sha"`
@@ -109,6 +110,7 @@ func (c *RESTClient) GetMRWithChanges(ctx context.Context, projectPath string, i
 	return &MR{
 		IID: env.IID, Title: env.Title, WebURL: env.WebURL,
 		BaseSHA: env.DiffRefs.BaseSHA, StartSHA: env.DiffRefs.StartSHA, HeadSHA: env.DiffRefs.HeadSHA,
+		TargetBranch: env.TargetBranch,
 	}, changes, nil
 }
 

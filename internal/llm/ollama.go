@@ -86,7 +86,11 @@ func (o *Ollama) Generate(ctx context.Context, system, user string) (string, Tok
 }
 
 func (o *Ollama) Review(ctx context.Context, req ReviewRequest) (ReviewResponse, error) {
-	user := fmt.Sprintf("File: %s\n\nDiff:\n%s", req.FilePath, req.DiffChunk)
+	user := ""
+	if req.FileContext != "" {
+		user = req.FileContext + "\n\n"
+	}
+	user += fmt.Sprintf("File: %s\n\nDiff:\n%s", req.FilePath, req.DiffChunk)
 
 	body := ollamaReq{
 		Model: o.cfg.Model,

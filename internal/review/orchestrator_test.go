@@ -5,9 +5,11 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fahmi/gitlab-mr-review-bot/internal/gitlab"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/llm"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -179,4 +181,94 @@ func TestOrchestrator_Run_ReportsChunkFailures(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gl.notes, 1)
 	require.Contains(t, gl.notes[0], "failed to review")
+}
+
+// --- memory integration tests ---
+
+type recordingProvider struct {
+	lastReq llm.ReviewRequest
+}
+
+func (p *recordingProvider) Review(ctx context.Context, req llm.ReviewRequest) (llm.ReviewResponse, error) {
+	p.lastReq = req
+	return llm.ReviewResponse{Findings: []llm.Finding{}}, nil
+}
+func (p *recordingProvider) Generate(ctx context.Context, system, user string) (string, llm.TokenUsage, error) {
+	return `{"summary":"","conventions":[]}`, llm.TokenUsage{}, nil
+}
+func (p *recordingProvider) Name() string { return "recording" }
+
+type fakeGitLab struct{}
+
+func (fakeGitLab) GetMRWithChanges(ctx context.Context, project string, iid int) (*gitlab.MR, []gitlab.FileChange, error) {
+	return &gitlab.MR{
+			IID: iid, Title: "test mr", WebURL: "https://example",
+			BaseSHA: "b", StartSHA: "s", HeadSHA: "h", TargetBranch: "main",
+		}, []gitlab.FileChange{
+			{NewPath: "a.go", OldPath: "a.go", Diff: "@@ -1,1 +1,1 @@\n-old\n+new\n"},
+		}, nil
+}
+func (fakeGitLab) PostNote(ctx context.Context, project string, iid int, body string) error { return nil }
+func (fakeGitLab) PostDiscussion(ctx context.Context, project string, iid int, body string, pos gitlab.Position) error {
+	return nil
+}
+func (fakeGitLab) GetFileRaw(ctx context.Context, project, path, ref string) (string, error) {
+	return "", gitlab.ErrFileNotFound
+}
+
+type stubMemory struct {
+	recallCalled     bool
+	writeCalled      bool
+	recallReturn     memory.RecallResult
+	recallErr        error
+	receivedFindings []memory.Finding
+}
+
+func (s *stubMemory) Recall(ctx context.Context, mr memory.MRRef) (memory.RecallResult, error) {
+	s.recallCalled = true
+	return s.recallReturn, s.recallErr
+}
+func (s *stubMemory) Write(ctx context.Context, mr memory.MRRef, findings []memory.Finding, _ string) error {
+	s.writeCalled = true
+	s.receivedFindings = findings
+	return nil
+}
+func (s *stubMemory) WriteFeedback(ctx context.Context, mr memory.MRRef, rating memory.FeedbackRating, ratedBy string) error {
+	return nil
+}
+
+func TestOrchestrator_InjectsMemoryFileContext(t *testing.T) {
+	prov := &recordingProvider{}
+	mem := &stubMemory{recallReturn: memory.RecallResult{FileContext: "## Project Rules\nUse Postgres."}}
+	o := New(Config{
+		GitLab:        fakeGitLab{},
+		Provider:      prov,
+		Memory:        mem,
+		MaxFileTokens: 4000,
+		MaxMRTokens:   200000,
+	})
+	_, err := o.Run(context.Background(), "https://gitlab.example/group/repo/-/merge_requests/7")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !mem.recallCalled {
+		t.Fatalf("Recall not called")
+	}
+	if prov.lastReq.FileContext != "## Project Rules\nUse Postgres." {
+		t.Fatalf("FileContext got %q", prov.lastReq.FileContext)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !mem.writeCalled {
+		t.Fatalf("Write not called")
+	}
+}
+
+func TestOrchestrator_MemorySoftFailDoesNotBlock(t *testing.T) {
+	prov := &recordingProvider{}
+	mem := &stubMemory{recallErr: errors.New("mem9 down")}
+	o := New(Config{GitLab: fakeGitLab{}, Provider: prov, Memory: mem, MaxFileTokens: 4000, MaxMRTokens: 200000})
+	_, err := o.Run(context.Background(), "https://gitlab.example/group/repo/-/merge_requests/7")
+	if err != nil {
+		t.Fatalf("expected nil err on memory failure, got %v", err)
+	}
 }

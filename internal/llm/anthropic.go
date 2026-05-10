@@ -119,14 +119,22 @@ func (a *Anthropic) Generate(ctx context.Context, system, user string) (string, 
 func (a *Anthropic) Review(ctx context.Context, req ReviewRequest) (ReviewResponse, error) {
 	user := fmt.Sprintf("File: %s\n\nDiff:\n%s", req.FilePath, req.DiffChunk)
 
+	system := []anthropicBlock{{
+		Type:         "text",
+		Text:         req.SystemPrompt,
+		CacheControl: map[string]string{"type": "ephemeral"},
+	}}
+	if req.FileContext != "" {
+		system = append(system, anthropicBlock{
+			Type:         "text",
+			Text:         "\n\n" + req.FileContext,
+			CacheControl: map[string]string{"type": "ephemeral"},
+		})
+	}
 	body := anthropicReq{
 		Model:     a.cfg.Model,
 		MaxTokens: 4096,
-		System: []anthropicBlock{{
-			Type:         "text",
-			Text:         req.SystemPrompt,
-			CacheControl: map[string]string{"type": "ephemeral"},
-		}},
+		System:    system,
 		Messages: []anthropicMsg{{
 			Role:    "user",
 			Content: []anthropicBlock{{Type: "text", Text: user}},
