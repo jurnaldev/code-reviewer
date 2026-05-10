@@ -93,7 +93,7 @@ func TestBot_HappyPath(t *testing.T) {
 
 	b := &Bot{
 		Session: sess, Runner: runner, Jobs: tr,
-		Validator:  Validator{Tracker: tr},
+		Validator:  Validator{Tracker: tr, AllowedHosts: map[string]bool{"gl.example.com": true}},
 		TickEvery:  20 * time.Millisecond,
 		JobTimeout: 2 * time.Second,
 	}
@@ -118,7 +118,7 @@ func TestBot_HappyPath(t *testing.T) {
 func TestBot_RejectsBadURL(t *testing.T) {
 	sess := &fakeSession{}
 	tr := jobs.New()
-	b := &Bot{Session: sess, Runner: &fakeRunner{}, Jobs: tr, Validator: Validator{Tracker: tr}, TickEvery: time.Second, JobTimeout: time.Second}
+	b := &Bot{Session: sess, Runner: &fakeRunner{}, Jobs: tr, Validator: Validator{Tracker: tr, AllowedHosts: map[string]bool{"gl.example.com": true}}, TickEvery: time.Second, JobTimeout: time.Second}
 
 	b.HandleInteraction(mkInteraction("u1", "garbage"))
 
@@ -131,7 +131,7 @@ func TestBot_RejectsDuplicate(t *testing.T) {
 	tr := jobs.New()
 	tr.Create("u1", "https://gl.example.com/team/proj/-/merge_requests/4")
 
-	b := &Bot{Session: sess, Runner: &fakeRunner{}, Jobs: tr, Validator: Validator{Tracker: tr}, TickEvery: time.Second, JobTimeout: time.Second}
+	b := &Bot{Session: sess, Runner: &fakeRunner{}, Jobs: tr, Validator: Validator{Tracker: tr, AllowedHosts: map[string]bool{"gl.example.com": true}}, TickEvery: time.Second, JobTimeout: time.Second}
 
 	b.HandleInteraction(mkInteraction("u1", "https://gl.example.com/team/proj/-/merge_requests/4"))
 
@@ -143,7 +143,7 @@ func TestBot_PingReplies(t *testing.T) {
 	sess := &fakeSession{}
 	tr := jobs.New()
 	runner := &fakeRunner{}
-	b := &Bot{Session: sess, Runner: runner, Jobs: tr, Validator: Validator{Tracker: tr}, TickEvery: time.Second, JobTimeout: time.Second}
+	b := &Bot{Session: sess, Runner: runner, Jobs: tr, Validator: Validator{Tracker: tr, AllowedHosts: map[string]bool{"gl.example.com": true}}, TickEvery: time.Second, JobTimeout: time.Second}
 
 	b.HandleInteraction(mkPingInteraction("u1"))
 
@@ -157,7 +157,7 @@ func TestBot_RunnerError(t *testing.T) {
 	sess := &fakeSession{}
 	tr := jobs.New()
 	runner := &fakeRunner{wantErr: errors.New("boom")}
-	b := &Bot{Session: sess, Runner: runner, Jobs: tr, Validator: Validator{Tracker: tr}, TickEvery: 20 * time.Millisecond, JobTimeout: time.Second}
+	b := &Bot{Session: sess, Runner: runner, Jobs: tr, Validator: Validator{Tracker: tr, AllowedHosts: map[string]bool{"gl.example.com": true}}, TickEvery: 20 * time.Millisecond, JobTimeout: time.Second}
 
 	done := make(chan struct{})
 	b.OnJobDone = func() { close(done) }
