@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,10 +13,13 @@ import (
 	"strings"
 )
 
+var ErrFileNotFound = errors.New("gitlab: file not found")
+
 type Client interface {
 	GetMRWithChanges(ctx context.Context, projectPath string, mrIID int) (*MR, []FileChange, error)
 	PostNote(ctx context.Context, projectPath string, mrIID int, body string) error
 	PostDiscussion(ctx context.Context, projectPath string, mrIID int, body string, pos Position) error
+	GetFileRaw(ctx context.Context, projectPath, filePath, ref string) (string, error)
 }
 
 type RESTClient struct {
@@ -143,6 +147,28 @@ func (c *RESTClient) fetchChangesFallback(ctx context.Context, mrURL string) ([]
 		return nil, err
 	}
 	return ch.Changes, nil
+}
+
+func (c *RESTClient) GetFileRaw(ctx context.Context, projectPath, filePath, ref string) (string, error) {
+	u := c.projURL(projectPath) + "/repository/files/" + url.PathEscape(filePath) + "/raw?ref=" + url.QueryEscape(ref)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("PRIVATE-TOKEN", c.token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == 404 {
+		return "", ErrFileNotFound
+	}
+	if resp.StatusCode/100 != 2 {
+		return "", fmt.Errorf("gitlab GET %s: %d %s", u, resp.StatusCode, string(rb))
+	}
+	return string(rb), nil
 }
 
 func isNotFound(err error) bool {

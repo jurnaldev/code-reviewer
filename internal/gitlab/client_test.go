@@ -3,9 +3,11 @@ package gitlab
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -149,4 +151,39 @@ func TestRESTClient_NonOK(t *testing.T) {
 	_, _, err := c.GetMRWithChanges(context.Background(), "x/y", 1)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "404")
+}
+
+func TestRESTClient_GetFileRaw_Success(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.RequestURI
+		w.Write([]byte("rules content"))
+	}))
+	defer srv.Close()
+	c := NewRESTClient(srv.URL, "tok", srv.Client())
+	body, err := c.GetFileRaw(context.Background(), "group/repo", ".review/rules.md", "main")
+	if err != nil {
+		t.Fatalf("GetFileRaw: %v", err)
+	}
+	if body != "rules content" {
+		t.Fatalf("body %q", body)
+	}
+	if !strings.Contains(gotPath, "/api/v4/projects/group%2Frepo/repository/files/.review%2Frules.md/raw") {
+		t.Fatalf("path %q", gotPath)
+	}
+	if !strings.Contains(gotPath, "ref=main") {
+		t.Fatalf("missing ref in %q", gotPath)
+	}
+}
+
+func TestRESTClient_GetFileRaw_NotFoundReturnsErrNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+	c := NewRESTClient(srv.URL, "tok", srv.Client())
+	_, err := c.GetFileRaw(context.Background(), "g/r", "missing.md", "main")
+	if !errors.Is(err, ErrFileNotFound) {
+		t.Fatalf("got %v, want ErrFileNotFound", err)
+	}
 }

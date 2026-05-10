@@ -59,6 +59,9 @@ func (f *fakeGL) PostDiscussion(ctx context.Context, project string, iid int, bo
 	}{body, pos})
 	return nil
 }
+func (f *fakeGL) GetFileRaw(ctx context.Context, projectPath, filePath, ref string) (string, error) {
+	return "", gitlab.ErrFileNotFound
+}
 
 func TestOrchestrator_Run_PostsSummaryAndInline(t *testing.T) {
 	gl := &fakeGL{}
