@@ -23,11 +23,9 @@ func TestRESTClient_GetMRChanges(t *testing.T) {
 			},
 		})
 	})
-	mux.HandleFunc("/api/v4/projects/team%2Fproject/merge_requests/42/changes", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"changes": []map[string]any{
-				{"old_path": "a.go", "new_path": "a.go", "diff": "@@ -1 +1 @@\n+x"},
-			},
+	mux.HandleFunc("/api/v4/projects/team%2Fproject/merge_requests/42/diffs", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"old_path": "a.go", "new_path": "a.go", "diff": "@@ -1 +1 @@\n+x"},
 		})
 	})
 	srv := httptest.NewServer(mux)
@@ -40,6 +38,69 @@ func TestRESTClient_GetMRChanges(t *testing.T) {
 	require.Equal(t, "H", mr.HeadSHA)
 	require.Len(t, changes, 1)
 	require.Equal(t, "a.go", changes[0].NewPath)
+}
+
+func TestRESTClient_GetMRChanges_Paginates(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/p/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"iid": 1, "diff_refs": map[string]string{"base_sha": "B", "start_sha": "S", "head_sha": "H"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/p/merge_requests/1/diffs", func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		switch page {
+		case "1":
+			w.Header().Set("X-Next-Page", "2")
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"new_path": "a.go", "diff": "+a"},
+				{"new_path": "b.go", "diff": "+b"},
+			})
+		case "2":
+			// no X-Next-Page => last page
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"new_path": "c.go", "diff": "+c"},
+			})
+		default:
+			t.Fatalf("unexpected page %q", page)
+		}
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewRESTClient(srv.URL, "tok", srv.Client())
+	_, changes, err := c.GetMRWithChanges(context.Background(), "p", 1)
+	require.NoError(t, err)
+	require.Len(t, changes, 3)
+	require.Equal(t, "c.go", changes[2].NewPath)
+}
+
+func TestRESTClient_GetMRChanges_FallsBackToChanges(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/p/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"iid": 1, "diff_refs": map[string]string{"base_sha": "B"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/p/merge_requests/1/diffs", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		_, _ = w.Write([]byte(`{"message":"404 Not found"}`))
+	})
+	mux.HandleFunc("/api/v4/projects/p/merge_requests/1/changes", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"changes": []map[string]any{
+				{"new_path": "legacy.go", "diff": "+x"},
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewRESTClient(srv.URL, "tok", srv.Client())
+	_, changes, err := c.GetMRWithChanges(context.Background(), "p", 1)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	require.Equal(t, "legacy.go", changes[0].NewPath)
 }
 
 func TestRESTClient_PostNote(t *testing.T) {

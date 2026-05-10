@@ -19,13 +19,14 @@ import (
 const postTimeout = 30 * time.Second
 
 type Config struct {
-	GitLab        gitlab.Client
-	Provider      llm.Provider
-	SystemPrompt  string
-	MaxFileTokens int
-	MaxMRTokens   int
-	MaxConcurrent int
-	IgnoreGlobs   []string
+	GitLab         gitlab.Client
+	Provider       llm.Provider
+	SystemPrompt   string
+	MaxFileTokens  int
+	MaxMRTokens    int
+	MaxConcurrent  int
+	LLMCallTimeout time.Duration
+	IgnoreGlobs    []string
 }
 
 type Orchestrator struct{ cfg Config }
@@ -36,6 +37,9 @@ func New(cfg Config) *Orchestrator {
 	}
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = 1
+	}
+	if cfg.LLMCallTimeout <= 0 {
+		cfg.LLMCallTimeout = 90 * time.Second
 	}
 	return &Orchestrator{cfg: cfg}
 }
@@ -132,14 +136,28 @@ func (o *Orchestrator) RunWithProgress(ctx context.Context, mrURL string, progre
 	)
 	var wg sync.WaitGroup
 	total := len(jobs)
+dispatch:
 	for _, j := range jobs {
-		j := j
+		// Skip remaining work if the parent ctx is already done. Avoids burning
+		// LLM spend on chunks whose results will be discarded after timeout.
+		if ctx.Err() != nil {
+			break dispatch
+		}
+
 		wg.Add(1)
-		sem <- struct{}{}
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Done()
+			break dispatch
+		}
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			resp, err := o.cfg.Provider.Review(ctx, llm.ReviewRequest{
+
+			callCtx, cancel := context.WithTimeout(ctx, o.cfg.LLMCallTimeout)
+			defer cancel()
+			resp, err := o.cfg.Provider.Review(callCtx, llm.ReviewRequest{
 				SystemPrompt: o.cfg.SystemPrompt,
 				FilePath:     j.path,
 				DiffChunk:    j.chunk.DiffText,
