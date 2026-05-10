@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -154,34 +153,18 @@ memory:
     enabled: true
     dir: ~/.cache/gitlab-mr-bot/memory
 `
-	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
 	c, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !c.Memory.Enabled {
-		t.Fatalf("expected memory.enabled=true")
-	}
-	if c.Memory.RecallTokenBudget != 1500 {
-		t.Fatalf("budget got %d", c.Memory.RecallTokenBudget)
-	}
-	if c.Memory.HTTPTimeout != 5*time.Second {
-		t.Fatalf("timeout got %v", c.Memory.HTTPTimeout)
-	}
-	if !c.Memory.Mem9.Enabled || c.Memory.Mem9.APIKey != "mk" {
-		t.Fatalf("mem9 sub-block not parsed: %+v", c.Memory.Mem9)
-	}
-	if c.Memory.Mem9.ConventionsTopK != 30 || c.Memory.Mem9.SummariesTopK != 4 {
-		t.Fatalf("topk got %d/%d", c.Memory.Mem9.ConventionsTopK, c.Memory.Mem9.SummariesTopK)
-	}
-	if c.Memory.RepoRules.Path != ".review/rules.md" {
-		t.Fatalf("repo_rules.path got %q", c.Memory.RepoRules.Path)
-	}
-	if c.Memory.Mirror.Dir != "~/.cache/gitlab-mr-bot/memory" {
-		t.Fatalf("mirror.dir got %q", c.Memory.Mirror.Dir)
-	}
+	require.NoError(t, err)
+	require.True(t, c.Memory.Enabled)
+	require.Equal(t, 1500, c.Memory.RecallTokenBudget)
+	require.Equal(t, 5*time.Second, c.Memory.HTTPTimeout)
+	require.True(t, c.Memory.Mem9.Enabled)
+	require.Equal(t, "mk", c.Memory.Mem9.APIKey)
+	require.Equal(t, 30, c.Memory.Mem9.ConventionsTopK)
+	require.Equal(t, 4, c.Memory.Mem9.SummariesTopK)
+	require.Equal(t, ".review/rules.md", c.Memory.RepoRules.Path)
+	require.Equal(t, "~/.cache/gitlab-mr-bot/memory", c.Memory.Mirror.Dir)
 }
 
 func TestLoad_MemoryBlock_DefaultsAndDisabled(t *testing.T) {
@@ -199,16 +182,16 @@ llm:
   model: m
   api_key: k
 `
-	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
 	c, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if c.Memory.Enabled {
-		t.Fatalf("memory should default disabled when block absent")
-	}
+	require.NoError(t, err)
+	require.False(t, c.Memory.Enabled)
+	require.Equal(t, 0, c.Memory.RecallTokenBudget)
+	require.Equal(t, time.Duration(0), c.Memory.HTTPTimeout)
+	require.False(t, c.Memory.Mem9.Enabled)
+	require.Empty(t, c.Memory.Mem9.BaseURL)
+	require.False(t, c.Memory.Mirror.Enabled)
+	require.Empty(t, c.Memory.Mirror.Dir)
 }
 
 func TestLoad_MemoryBlock_RejectsMem9EnabledWithoutKey(t *testing.T) {
@@ -224,11 +207,44 @@ memory:
     enabled: true
     base_url: https://api.mem9.ai
 `
-	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
 	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), "memory.mem9.api_key") {
-		t.Fatalf("expected api_key validation error, got %v", err)
-	}
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "memory.mem9.api_key")
+}
+
+func TestLoad_MemoryBlock_AppliesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `
+discord:
+  token: t
+  app_id: a
+gitlab:
+  base_url: https://g
+  token: gt
+llm:
+  provider: anthropic
+  model: m
+  api_key: k
+memory:
+  enabled: true
+  mem9:
+    enabled: true
+    api_key: k
+  repo_rules:
+    enabled: true
+  mirror:
+    enabled: true
+`
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
+	c, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, 2000, c.Memory.RecallTokenBudget)
+	require.Equal(t, 10*time.Second, c.Memory.HTTPTimeout)
+	require.Equal(t, "https://api.mem9.ai", c.Memory.Mem9.BaseURL)
+	require.Equal(t, 20, c.Memory.Mem9.ConventionsTopK)
+	require.Equal(t, 5, c.Memory.Mem9.SummariesTopK)
+	require.Equal(t, ".review/rules.md", c.Memory.RepoRules.Path)
+	require.Equal(t, "~/.cache/gitlab-mr-bot/memory", c.Memory.Mirror.Dir)
 }
