@@ -1,9 +1,16 @@
 package llm
 
-import "context"
+import (
+	"context"
+	_ "embed"
+)
+
+//go:embed system_prompt.md
+var SystemPromptDefault string
 
 type Provider interface {
 	Review(ctx context.Context, req ReviewRequest) (ReviewResponse, error)
+	Generate(ctx context.Context, system, user string) (string, TokenUsage, error)
 	Name() string
 }
 
@@ -34,14 +41,3 @@ type TokenUsage struct {
 	CachedReadTokens int
 }
 
-const SystemPromptDefault = `You are a senior code reviewer. Review the supplied unified diff for:
-- bugs and logic errors
-- security vulnerabilities
-- performance problems
-- missing test coverage for new logic
-- style violations only when egregious
-
-Return ONLY a JSON object with this shape:
-{"findings":[{"severity":"critical|major|minor|nit","category":"bug|security|perf|test|style","file":"path/from/diff","line":<int new-file line>,"message":"...","suggestion":"optional code"}]}
-
-Use the new-file line number from the @@ -A,B +C,D @@ header. Omit a finding if you are not confident. Do not output prose outside the JSON.`

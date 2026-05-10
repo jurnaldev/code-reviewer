@@ -61,3 +61,36 @@ func TestAnthropic_ReturnsErrorOnNon2xx(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "429")
 }
+
+func TestAnthropic_Generate_ReturnsText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		// Verify system prompt is present in System block
+		systems, _ := got["system"].([]any)
+		if len(systems) == 0 {
+			t.Fatalf("no system block")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{
+				{"type": "text", "text": "hello"},
+			},
+			"usage": map[string]any{"input_tokens": 10, "output_tokens": 2},
+		})
+	}))
+	defer srv.Close()
+
+	a := NewAnthropic(AnthropicConfig{
+		APIKey: "k", Model: "claude-x", BaseURL: srv.URL, HTTP: srv.Client(),
+	})
+	out, usage, err := a.Generate(context.Background(), "system text", "user text")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if out != "hello" {
+		t.Fatalf("got %q, want hello", out)
+	}
+	if usage.InputTokens != 10 || usage.OutputTokens != 2 {
+		t.Fatalf("usage %+v", usage)
+	}
+}
