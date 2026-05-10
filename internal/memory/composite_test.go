@@ -36,9 +36,10 @@ func (s *stubMem9Adapter) CreateFeedback(ctx context.Context, mr MRRef, rating F
 }
 
 type stubMirrorSink struct {
-	convs    []string
-	summaries []string
-	feedback []string
+	convs          []string
+	summaries      []string
+	feedback       []string
+	lastSyncRemote map[Kind]map[string]string
 }
 
 func (s *stubMirrorSink) AppendConvention(ctx context.Context, mr MRRef, text, id string) error {
@@ -51,6 +52,10 @@ func (s *stubMirrorSink) AppendMRSummary(ctx context.Context, mr MRRef, text, id
 }
 func (s *stubMirrorSink) AppendFeedback(ctx context.Context, mr MRRef, rating FeedbackRating, ratedBy string) error {
 	s.feedback = append(s.feedback, string(rating)+":"+ratedBy)
+	return nil
+}
+func (s *stubMirrorSink) Sync(ctx context.Context, mr MRRef, remote map[Kind]map[string]string) error {
+	s.lastSyncRemote = remote
 	return nil
 }
 
@@ -130,4 +135,58 @@ func TestComposite_WriteFeedback_FansOut(t *testing.T) {
 	if len(mirror.feedback) != 1 {
 		t.Fatalf("mirror fb %v", mirror.feedback)
 	}
+}
+
+func TestComposite_Recall_SyncsMirrorWithMem9Results(t *testing.T) {
+	mirror := &stubMirrorSink{}
+	c := &Composite{
+		Sources: []Source{
+			&stubReader{mems: []Memory{
+				{ID: "m1", Kind: KindConvention, Content: "rule from mem9"},
+				{ID: "m_s7", Kind: KindMRSummary, Content: "!7 sum"},
+				{Kind: KindRule, Content: "rule from repo, no id"}, // no ID, should not appear in remote map
+			}},
+		},
+		Mirror:      mirror,
+		TokenBudget: 5000,
+	}
+	_, err := c.Recall(context.Background(), MRRef{Project: "g/r"})
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if mirror.lastSyncRemote == nil {
+		t.Fatalf("Sync was not called")
+	}
+	if got := mirror.lastSyncRemote[KindConvention]["m1"]; got != "rule from mem9" {
+		t.Fatalf("convention map: %+v", mirror.lastSyncRemote)
+	}
+	if got := mirror.lastSyncRemote[KindMRSummary]["m_s7"]; got != "!7 sum" {
+		t.Fatalf("summary map: %+v", mirror.lastSyncRemote)
+	}
+	// Entries without ID must not appear.
+	if _, ok := mirror.lastSyncRemote[KindRule]; ok {
+		t.Fatalf("KindRule entries without ID should not be in remote: %+v", mirror.lastSyncRemote)
+	}
+}
+
+func TestComposite_Recall_MirrorSyncErrorIsSoftFail(t *testing.T) {
+	mirror := &erroringSync{err: context.DeadlineExceeded}
+	c := &Composite{
+		Sources:     []Source{&stubReader{mems: []Memory{{Kind: KindConvention, Content: "x", ID: "m1"}}}},
+		Mirror:      mirror,
+		TokenBudget: 5000,
+	}
+	_, err := c.Recall(context.Background(), MRRef{Project: "g/r"})
+	if err != nil {
+		t.Fatalf("expected nil err on mirror sync failure, got %v", err)
+	}
+}
+
+type erroringSync struct {
+	stubMirrorSink
+	err error
+}
+
+func (e *erroringSync) Sync(ctx context.Context, mr MRRef, remote map[Kind]map[string]string) error {
+	return e.err
 }

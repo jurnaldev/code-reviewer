@@ -26,6 +26,7 @@ type MirrorSink interface {
 	AppendConvention(ctx context.Context, mr MRRef, text, id string) error
 	AppendMRSummary(ctx context.Context, mr MRRef, text, id string) error
 	AppendFeedback(ctx context.Context, mr MRRef, rating FeedbackRating, ratedBy string) error
+	Sync(ctx context.Context, mr MRRef, remote map[Kind]map[string]string) error
 }
 
 // ExtractorAPI is the extractor abstraction.
@@ -70,6 +71,21 @@ func (c *Composite) Recall(ctx context.Context, mr MRRef) (RecallResult, error) 
 		merged = append(merged, r.mems...)
 	}
 	merged = dedupByID(merged)
+	if c.Mirror != nil {
+		remote := map[Kind]map[string]string{}
+		for _, m := range merged {
+			if m.ID == "" {
+				continue
+			}
+			if remote[m.Kind] == nil {
+				remote[m.Kind] = map[string]string{}
+			}
+			remote[m.Kind][m.ID] = m.Content
+		}
+		if serr := c.Mirror.Sync(ctx, mr, remote); serr != nil {
+			log.Printf("memory: mirror sync failed: %v", serr)
+		}
+	}
 	budget := c.TokenBudget
 	if budget == 0 {
 		budget = 2000
