@@ -77,3 +77,24 @@ func TestOllama_DefaultBaseURL(t *testing.T) {
 	o := NewOllama(OllamaConfig{Model: "m"})
 	require.Equal(t, "http://localhost:11434", o.cfg.BaseURL)
 }
+
+func TestOllama_Generate_ReturnsText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message":           map[string]any{"role": "assistant", "content": "hi"},
+			"prompt_eval_count": 4, "eval_count": 1,
+		})
+	}))
+	defer srv.Close()
+	o := NewOllama(OllamaConfig{Model: "m", BaseURL: srv.URL, HTTP: srv.Client()})
+	out, usage, err := o.Generate(context.Background(), "sys", "usr")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if out != "hi" {
+		t.Fatalf("got %q", out)
+	}
+	if usage.InputTokens != 4 || usage.OutputTokens != 1 {
+		t.Fatalf("usage %+v", usage)
+	}
+}

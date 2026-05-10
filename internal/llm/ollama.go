@@ -51,6 +51,40 @@ type ollamaResp struct {
 	Done            bool          `json:"done"`
 }
 
+func (o *Ollama) Generate(ctx context.Context, system, user string) (string, TokenUsage, error) {
+	body := ollamaReq{
+		Model: o.cfg.Model,
+		Messages: []ollamaMessage{
+			{Role: "system", Content: system},
+			{Role: "user", Content: user},
+		},
+		Stream: false,
+	}
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return "", TokenUsage{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", o.cfg.BaseURL+"/api/chat", bytes.NewReader(buf))
+	if err != nil {
+		return "", TokenUsage{}, err
+	}
+	httpReq.Header.Set("content-type", "application/json")
+	resp, err := o.cfg.HTTP.Do(httpReq)
+	if err != nil {
+		return "", TokenUsage{}, err
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		return "", TokenUsage{}, fmt.Errorf("ollama %d: %s", resp.StatusCode, string(rb))
+	}
+	var or ollamaResp
+	if err := json.Unmarshal(rb, &or); err != nil {
+		return "", TokenUsage{}, fmt.Errorf("decode response: %w", err)
+	}
+	return or.Message.Content, TokenUsage{InputTokens: or.PromptEvalCount, OutputTokens: or.EvalCount}, nil
+}
+
 func (o *Ollama) Review(ctx context.Context, req ReviewRequest) (ReviewResponse, error) {
 	user := fmt.Sprintf("File: %s\n\nDiff:\n%s", req.FilePath, req.DiffChunk)
 

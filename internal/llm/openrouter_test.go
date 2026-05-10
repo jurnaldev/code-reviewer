@@ -118,6 +118,29 @@ func TestOpenRouter_DefaultBaseURL(t *testing.T) {
 	require.Equal(t, "https://openrouter.ai/api", o.cfg.BaseURL)
 }
 
+func TestOpenRouter_Generate_ReturnsText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"role": "assistant", "content": "hi"}},
+			},
+			"usage": map[string]any{"prompt_tokens": 6, "completion_tokens": 2},
+		})
+	}))
+	defer srv.Close()
+	o := NewOpenRouter(OpenRouterConfig{APIKey: "k", Model: "x/y", BaseURL: srv.URL, HTTP: srv.Client()})
+	out, usage, err := o.Generate(context.Background(), "sys", "usr")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if out != "hi" {
+		t.Fatalf("got %q", out)
+	}
+	if usage.InputTokens != 6 || usage.OutputTokens != 2 {
+		t.Fatalf("usage %+v", usage)
+	}
+}
+
 func TestOpenRouter_BaseURLWithTrailingV1(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -128,6 +128,29 @@ func (o *OpenAI) post(ctx context.Context, msgs []openaiMessage, jsonMode bool) 
 	return rb, resp.StatusCode, nil
 }
 
+func (o *OpenAI) Generate(ctx context.Context, system, user string) (string, TokenUsage, error) {
+	msgs := []openaiMessage{
+		{Role: "system", Content: system},
+		{Role: "user", Content: user},
+	}
+	rb, status, err := o.post(ctx, msgs, false)
+	if err != nil {
+		return "", TokenUsage{}, err
+	}
+	if status/100 != 2 {
+		return "", TokenUsage{}, fmt.Errorf("openai %d: %s", status, string(rb))
+	}
+	var or openaiResp
+	if err := json.Unmarshal(rb, &or); err != nil {
+		return "", TokenUsage{}, fmt.Errorf("decode response: %w", err)
+	}
+	var text string
+	if len(or.Choices) > 0 {
+		text = or.Choices[0].Message.Content
+	}
+	return text, TokenUsage{InputTokens: or.Usage.PromptTokens, OutputTokens: or.Usage.CompletionTokens}, nil
+}
+
 func isJSONModeUnsupported(body []byte) bool {
 	s := strings.ToLower(string(body))
 	return strings.Contains(s, "json mode is not supported") ||

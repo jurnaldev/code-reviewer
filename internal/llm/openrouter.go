@@ -62,6 +62,51 @@ type openrouterResp struct {
 	} `json:"usage"`
 }
 
+func (o *OpenRouter) Generate(ctx context.Context, system, user string) (string, TokenUsage, error) {
+	body := openrouterReq{
+		Model: o.cfg.Model,
+		Messages: []openrouterMessage{
+			{Role: "system", Content: system},
+			{Role: "user", Content: user},
+		},
+	}
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return "", TokenUsage{}, err
+	}
+	base := strings.TrimSuffix(strings.TrimRight(o.cfg.BaseURL, "/"), "/v1")
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", bytes.NewReader(buf))
+	if err != nil {
+		return "", TokenUsage{}, err
+	}
+	httpReq.Header.Set("content-type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+o.cfg.APIKey)
+	if o.cfg.Referer != "" {
+		httpReq.Header.Set("HTTP-Referer", o.cfg.Referer)
+	}
+	if o.cfg.Title != "" {
+		httpReq.Header.Set("X-Title", o.cfg.Title)
+	}
+	resp, err := o.cfg.HTTP.Do(httpReq)
+	if err != nil {
+		return "", TokenUsage{}, err
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		return "", TokenUsage{}, fmt.Errorf("openrouter %d: %s", resp.StatusCode, string(rb))
+	}
+	var or openrouterResp
+	if err := json.Unmarshal(rb, &or); err != nil {
+		return "", TokenUsage{}, fmt.Errorf("decode response (body=%q): %w", truncate(string(rb), 300), err)
+	}
+	var text string
+	if len(or.Choices) > 0 {
+		text = or.Choices[0].Message.Content
+	}
+	return text, TokenUsage{InputTokens: or.Usage.PromptTokens, OutputTokens: or.Usage.CompletionTokens}, nil
+}
+
 func (o *OpenRouter) Review(ctx context.Context, req ReviewRequest) (ReviewResponse, error) {
 	user := fmt.Sprintf("File: %s\n\nDiff:\n%s", req.FilePath, req.DiffChunk)
 

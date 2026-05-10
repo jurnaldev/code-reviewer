@@ -73,3 +73,26 @@ func TestOpenAI_NameReturnsOpenAI(t *testing.T) {
 	o := NewOpenAI(OpenAIConfig{APIKey: "k", Model: "m"})
 	require.Equal(t, "openai", o.Name())
 }
+
+func TestOpenAI_Generate_ReturnsText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"role": "assistant", "content": "hi"}},
+			},
+			"usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 1},
+		})
+	}))
+	defer srv.Close()
+	o := NewOpenAI(OpenAIConfig{APIKey: "k", Model: "gpt-x", BaseURL: srv.URL, HTTP: srv.Client()})
+	out, usage, err := o.Generate(context.Background(), "sys", "usr")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if out != "hi" {
+		t.Fatalf("got %q", out)
+	}
+	if usage.InputTokens != 5 || usage.OutputTokens != 1 {
+		t.Fatalf("usage %+v", usage)
+	}
+}

@@ -24,6 +24,9 @@ func (f *fakeProvider) Review(ctx context.Context, req llm.ReviewRequest) (llm.R
 	f.calls++
 	return llm.ReviewResponse{Findings: f.findings}, nil
 }
+func (f *fakeProvider) Generate(ctx context.Context, system, user string) (string, llm.TokenUsage, error) {
+	return "", llm.TokenUsage{}, nil
+}
 
 type fakeGL struct {
 	mu          sync.Mutex
@@ -155,6 +158,9 @@ type failingProvider struct{}
 func (failingProvider) Name() string { return "failing" }
 func (failingProvider) Review(ctx context.Context, req llm.ReviewRequest) (llm.ReviewResponse, error) {
 	return llm.ReviewResponse{}, errors.New("malformed")
+}
+func (failingProvider) Generate(ctx context.Context, system, user string) (string, llm.TokenUsage, error) {
+	return "", llm.TokenUsage{}, errors.New("malformed")
 }
 
 func TestOrchestrator_Run_ReportsChunkFailures(t *testing.T) {
