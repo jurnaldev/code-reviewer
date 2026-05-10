@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/fahmi/gitlab-mr-review-bot/internal/gitlab"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/llm"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/memory"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/memory/mem9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -81,4 +84,69 @@ func TestE2E_HappyPath(t *testing.T) {
 	require.Equal(t, 1, notes)
 	require.Equal(t, 1, discussions)
 	require.Equal(t, 1, res.Posted)
+}
+
+func TestE2E_MemoryRecallInjectedIntoProviderRequest(t *testing.T) {
+	mem9Srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"memories": []map[string]any{
+				{"id": "m1", "content": "Always validate JWTs.", "score": 0.9},
+			},
+		})
+	}))
+	defer mem9Srv.Close()
+
+	gl := &fakeGitLab{}
+	prov := &recordingProvider{}
+
+	mem9c := mem9.New(mem9.Config{BaseURL: mem9Srv.URL, APIKey: "k", HTTP: mem9Srv.Client()})
+	mem9src := memory.NewMem9Source(mem9c, memory.Mem9Tuning{ConventionsTopK: 5, SummariesTopK: 5})
+	composite := &memory.Composite{
+		Sources:     []memory.Source{mem9src},
+		Mem9:        mem9src,
+		Extractor:   memory.NewExtractor(prov),
+		TokenBudget: 5000,
+	}
+	o := New(Config{
+		GitLab:        gl,
+		Provider:      prov,
+		Memory:        composite,
+		MaxFileTokens: 4000,
+		MaxMRTokens:   200000,
+	})
+	_, err := o.Run(context.Background(), "https://gitlab.example/g/r/-/merge_requests/1")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(prov.lastReq.FileContext, "Always validate JWTs") {
+		t.Fatalf("FileContext missing recalled rule: %q", prov.lastReq.FileContext)
+	}
+}
+
+func TestE2E_MemoryDownDoesNotBlockReview(t *testing.T) {
+	mem9Srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	defer mem9Srv.Close()
+
+	gl := &fakeGitLab{}
+	prov := &recordingProvider{}
+	mem9c := mem9.New(mem9.Config{BaseURL: mem9Srv.URL, APIKey: "k", HTTP: mem9Srv.Client()})
+	mem9src := memory.NewMem9Source(mem9c, memory.Mem9Tuning{})
+	composite := &memory.Composite{
+		Sources:   []memory.Source{mem9src},
+		Mem9:      mem9src,
+		Extractor: memory.NewExtractor(prov),
+	}
+	o := New(Config{
+		GitLab:        gl,
+		Provider:      prov,
+		Memory:        composite,
+		MaxFileTokens: 4000,
+		MaxMRTokens:   200000,
+	})
+	_, err := o.Run(context.Background(), "https://gitlab.example/g/r/-/merge_requests/1")
+	if err != nil {
+		t.Fatalf("expected nil err on memory failure: %v", err)
+	}
 }
