@@ -50,12 +50,13 @@ func main() {
 	}
 
 	o := review.New(review.Config{
-		GitLab:        gl,
-		Provider:      prov,
-		MaxFileTokens: cfg.Review.MaxFileTokens,
-		MaxMRTokens:   cfg.Review.MaxMRTokens,
-		MaxConcurrent: cfg.Review.MaxConcurrentChunks,
-		IgnoreGlobs:   cfg.Review.IgnoreGlobs,
+		GitLab:         gl,
+		Provider:       prov,
+		MaxFileTokens:  cfg.Review.MaxFileTokens,
+		MaxMRTokens:    cfg.Review.MaxMRTokens,
+		MaxConcurrent:  cfg.Review.MaxConcurrentChunks,
+		LLMCallTimeout: cfg.Review.LLMCallTimeout,
+		IgnoreGlobs:    cfg.Review.IgnoreGlobs,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Review.JobTimeout)

@@ -50,12 +50,13 @@ func main() {
 	}
 
 	o := review.New(review.Config{
-		GitLab:        gl,
-		Provider:      prov,
-		MaxFileTokens: cfg.Review.MaxFileTokens,
-		MaxMRTokens:   cfg.Review.MaxMRTokens,
-		MaxConcurrent: cfg.Review.MaxConcurrentChunks,
-		IgnoreGlobs:   cfg.Review.IgnoreGlobs,
+		GitLab:         gl,
+		Provider:       prov,
+		MaxFileTokens:  cfg.Review.MaxFileTokens,
+		MaxMRTokens:    cfg.Review.MaxMRTokens,
+		MaxConcurrent:  cfg.Review.MaxConcurrentChunks,
+		LLMCallTimeout: cfg.Review.LLMCallTimeout,
+		IgnoreGlobs:    cfg.Review.IgnoreGlobs,
 	})
 
 	tracker := jobs.New()
@@ -63,6 +64,12 @@ func main() {
 	sess, err := discordgo.New("Bot " + cfg.Discord.Token)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "discord new:", err)
+		os.Exit(1)
+	}
+
+	host, err := dg.HostFromBaseURL(cfg.GitLab.BaseURL)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gitlab base url:", err)
 		os.Exit(1)
 	}
 
@@ -74,6 +81,7 @@ func main() {
 			Tracker:        tracker,
 			AllowedUserIDs: toSet(cfg.Discord.AllowedUserIDs),
 			AllowedRoleIDs: toSet(cfg.Discord.AllowedRoleIDs),
+			AllowedHosts:   map[string]bool{host: true},
 		},
 		TickEvery:  5 * time.Second,
 		JobTimeout: cfg.Review.JobTimeout,
