@@ -9,6 +9,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/jobs"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/memory"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/review"
 	"github.com/stretchr/testify/require"
 )
@@ -35,18 +36,24 @@ func (f *fakeRunner) RunWithProgress(ctx context.Context, mrURL string, p review
 }
 
 type fakeSession struct {
-	mu          sync.Mutex
-	respCalls   int
-	editCalls   int
-	lastContent string
+	mu                 sync.Mutex
+	respCalls          int
+	editCalls          int
+	lastContent        string
+	respondedEphemeral bool
 }
 
 func (s *fakeSession) InteractionRespond(i *discordgo.Interaction, r *discordgo.InteractionResponse, _ ...discordgo.RequestOption) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.respCalls++
-	if r != nil && r.Data != nil && r.Data.Content != "" {
-		s.lastContent = r.Data.Content
+	if r != nil && r.Data != nil {
+		if r.Data.Content != "" {
+			s.lastContent = r.Data.Content
+		}
+		if r.Data.Flags&discordgo.MessageFlagsEphemeral != 0 {
+			s.respondedEphemeral = true
+		}
 	}
 	return nil
 }
@@ -170,4 +177,71 @@ func TestBot_RunnerError(t *testing.T) {
 		t.Fatal("job did not complete")
 	}
 	require.Contains(t, sess.lastContent, "error")
+}
+
+func TestBot_HandleInteraction_FeedbackUp(t *testing.T) {
+	mem := &stubBotMemory{}
+	bot := &Bot{
+		Session: &fakeSession{},
+		Memory:  mem,
+		Jobs:    jobs.New(),
+	}
+	job := bot.Jobs.Create("u1", "https://gitlab.example/group/repo/-/merge_requests/7")
+	bot.Jobs.Update(job.ID, func(j *jobs.Job) { j.Status = jobs.StatusDone })
+
+	i := &discordgo.Interaction{
+		Type: discordgo.InteractionMessageComponent,
+		Data: discordgo.MessageComponentInteractionData{
+			CustomID: "review_feedback:up:" + job.ID,
+		},
+		Member: &discordgo.Member{User: &discordgo.User{ID: "u1"}},
+	}
+	bot.HandleInteraction(i)
+	if mem.lastRating != memory.RatingUp {
+		t.Fatalf("rating got %s", mem.lastRating)
+	}
+	if mem.lastMR.IID != 7 {
+		t.Fatalf("iid got %d", mem.lastMR.IID)
+	}
+}
+
+func TestBot_HandleInteraction_FeedbackJobMissing(t *testing.T) {
+	mem := &stubBotMemory{}
+	sess := &fakeSession{}
+	bot := &Bot{Session: sess, Memory: mem, Jobs: jobs.New()}
+	i := &discordgo.Interaction{
+		Type: discordgo.InteractionMessageComponent,
+		Data: discordgo.MessageComponentInteractionData{
+			CustomID: "review_feedback:up:nonexistent",
+		},
+		Member: &discordgo.Member{User: &discordgo.User{ID: "u1"}},
+	}
+	bot.HandleInteraction(i)
+	if mem.called {
+		t.Fatalf("memory should not be called for missing job")
+	}
+	if !sess.respondedEphemeral {
+		t.Fatalf("expected ephemeral reply")
+	}
+}
+
+type stubBotMemory struct {
+	called      bool
+	lastRating  memory.FeedbackRating
+	lastMR      memory.MRRef
+	lastRatedBy string
+}
+
+func (s *stubBotMemory) Recall(ctx context.Context, mr memory.MRRef) (memory.RecallResult, error) {
+	return memory.RecallResult{}, nil
+}
+func (s *stubBotMemory) Write(ctx context.Context, mr memory.MRRef, findings []memory.Finding, _ string) error {
+	return nil
+}
+func (s *stubBotMemory) WriteFeedback(ctx context.Context, mr memory.MRRef, rating memory.FeedbackRating, ratedBy string) error {
+	s.called = true
+	s.lastMR = mr
+	s.lastRating = rating
+	s.lastRatedBy = ratedBy
+	return nil
 }

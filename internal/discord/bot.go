@@ -3,10 +3,13 @@ package discord
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/gitlab"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/jobs"
+	"github.com/fahmi/gitlab-mr-review-bot/internal/memory"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/review"
 )
 
@@ -22,16 +25,21 @@ type Bot struct {
 	Validator  Validator
 	TickEvery  time.Duration
 	JobTimeout time.Duration
+	Memory     memory.Client
 
 	// OnJobDone is called when a job finishes (success or error). Used by tests
 	// to synchronize; production code can leave it nil.
 	OnJobDone func()
 }
 
-// HandleInteraction dispatches slash commands. /review is deferred and edited
-// as the job progresses (Discord 3-second ack rule). /ping replies immediately
-// with an ephemeral "pong" so callers can confirm the bot is online.
+// HandleInteraction dispatches slash commands and message component interactions.
+// /review is deferred and edited as the job progresses (Discord 3-second ack rule).
+// /ping replies immediately with an ephemeral "pong" so callers can confirm the bot is online.
 func (b *Bot) HandleInteraction(i *discordgo.Interaction) {
+	if i.Type == discordgo.InteractionMessageComponent {
+		b.handleComponent(i)
+		return
+	}
 	switch commandName(i) {
 	case pingCommandName:
 		b.handlePing(i)
@@ -118,7 +126,21 @@ func (b *Bot) runJob(i *discordgo.Interaction, jobID, mrURL string) {
 
 	final := fmt.Sprintf(":white_check_mark: review done — posted=%d skipped=%d findings=%d\n%s",
 		res.Posted, res.Skipped, res.Findings, res.WebURL)
-	b.editFinal(i, final)
+	buttons := []discordgo.MessageComponent{
+		discordgo.ActionsRow{Components: []discordgo.MessageComponent{
+			discordgo.Button{
+				Label:    "👍 helpful",
+				Style:    discordgo.SuccessButton,
+				CustomID: "review_feedback:up:" + jobID,
+			},
+			discordgo.Button{
+				Label:    "👎 not helpful",
+				Style:    discordgo.DangerButton,
+				CustomID: "review_feedback:down:" + jobID,
+			},
+		}},
+	}
+	b.editFinalWithComponents(i, final, buttons)
 }
 
 func (b *Bot) statusTicker(ctx context.Context, i *discordgo.Interaction, jobID string) {
@@ -141,6 +163,58 @@ func (b *Bot) statusTicker(ctx context.Context, i *discordgo.Interaction, jobID 
 func (b *Bot) editFinal(i *discordgo.Interaction, content string) {
 	c := content
 	_, _ = b.Session.InteractionResponseEdit(i, &discordgo.WebhookEdit{Content: &c})
+}
+
+func (b *Bot) editFinalWithComponents(i *discordgo.Interaction, content string, components []discordgo.MessageComponent) {
+	c := content
+	_, _ = b.Session.InteractionResponseEdit(i, &discordgo.WebhookEdit{Content: &c, Components: &components})
+}
+
+func (b *Bot) handleComponent(i *discordgo.Interaction) {
+	if b.Memory == nil {
+		return
+	}
+	data, ok := i.Data.(discordgo.MessageComponentInteractionData)
+	if !ok {
+		return
+	}
+	parts := strings.SplitN(data.CustomID, ":", 3)
+	if len(parts) != 3 || parts[0] != "review_feedback" {
+		return
+	}
+	var rating memory.FeedbackRating
+	switch parts[1] {
+	case "up":
+		rating = memory.RatingUp
+	case "down":
+		rating = memory.RatingDown
+	default:
+		return
+	}
+	jobID := parts[2]
+	job, ok := b.Jobs.Get(jobID)
+	if !ok {
+		b.replyEphemeral(i, "this review has expired — feedback not recorded")
+		return
+	}
+	ref, err := gitlab.ParseURL(job.MRURL)
+	if err != nil {
+		b.replyEphemeral(i, "invalid MR URL on job")
+		return
+	}
+	userID, _ := principalFrom(i)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := b.Memory.WriteFeedback(ctx, memory.MRRef{
+		Project: ref.ProjectPath,
+		IID:     ref.MRIID,
+		WebURL:  job.WebURL,
+	}, rating, userID); err != nil {
+		b.replyEphemeral(i, "feedback failed: "+err.Error())
+		return
+	}
+	b.replyEphemeral(i, "noted, thanks")
 }
 
 func (b *Bot) replyEphemeral(i *discordgo.Interaction, content string) {
