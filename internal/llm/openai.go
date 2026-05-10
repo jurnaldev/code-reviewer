@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"sync/atomic"
 )
 
 type OpenAIConfig struct {
@@ -17,7 +19,8 @@ type OpenAIConfig struct {
 }
 
 type OpenAI struct {
-	cfg OpenAIConfig
+	cfg        OpenAIConfig
+	noJSONMode atomic.Bool
 }
 
 func NewOpenAI(c OpenAIConfig) *OpenAI {
@@ -40,7 +43,7 @@ type openaiMessage struct {
 type openaiReq struct {
 	Model          string          `json:"model"`
 	Messages       []openaiMessage `json:"messages"`
-	ResponseFormat openaiRF        `json:"response_format"`
+	ResponseFormat *openaiRF       `json:"response_format,omitempty"`
 }
 
 type openaiRF struct {
@@ -59,35 +62,24 @@ type openaiResp struct {
 
 func (o *OpenAI) Review(ctx context.Context, req ReviewRequest) (ReviewResponse, error) {
 	user := fmt.Sprintf("File: %s\n\nDiff:\n%s", req.FilePath, req.DiffChunk)
-
-	body := openaiReq{
-		Model: o.cfg.Model,
-		Messages: []openaiMessage{
-			{Role: "system", Content: req.SystemPrompt},
-			{Role: "user", Content: user},
-		},
-		ResponseFormat: openaiRF{Type: "json_object"},
+	msgs := []openaiMessage{
+		{Role: "system", Content: req.SystemPrompt},
+		{Role: "user", Content: user},
 	}
-	buf, err := json.Marshal(body)
+
+	rb, status, err := o.post(ctx, msgs, !o.noJSONMode.Load())
 	if err != nil {
 		return ReviewResponse{}, err
 	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", o.cfg.BaseURL+"/v1/chat/completions", bytes.NewReader(buf))
-	if err != nil {
-		return ReviewResponse{}, err
+	if status == 400 && isJSONModeUnsupported(rb) && !o.noJSONMode.Load() {
+		o.noJSONMode.Store(true)
+		rb, status, err = o.post(ctx, msgs, false)
+		if err != nil {
+			return ReviewResponse{}, err
+		}
 	}
-	httpReq.Header.Set("content-type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+o.cfg.APIKey)
-
-	resp, err := o.cfg.HTTP.Do(httpReq)
-	if err != nil {
-		return ReviewResponse{}, err
-	}
-	defer resp.Body.Close()
-	rb, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode/100 != 2 {
-		return ReviewResponse{}, fmt.Errorf("openai %d: %s", resp.StatusCode, string(rb))
+	if status/100 != 2 {
+		return ReviewResponse{}, fmt.Errorf("openai %d: %s", status, string(rb))
 	}
 
 	var or openaiResp
@@ -108,4 +100,37 @@ func (o *OpenAI) Review(ctx context.Context, req ReviewRequest) (ReviewResponse,
 			OutputTokens: or.Usage.CompletionTokens,
 		},
 	}, nil
+}
+
+func (o *OpenAI) post(ctx context.Context, msgs []openaiMessage, jsonMode bool) ([]byte, int, error) {
+	body := openaiReq{Model: o.cfg.Model, Messages: msgs}
+	if jsonMode {
+		body.ResponseFormat = &openaiRF{Type: "json_object"}
+	}
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, 0, err
+	}
+	base := strings.TrimSuffix(strings.TrimRight(o.cfg.BaseURL, "/"), "/v1")
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", bytes.NewReader(buf))
+	if err != nil {
+		return nil, 0, err
+	}
+	httpReq.Header.Set("content-type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+o.cfg.APIKey)
+
+	resp, err := o.cfg.HTTP.Do(httpReq)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	return rb, resp.StatusCode, nil
+}
+
+func isJSONModeUnsupported(body []byte) bool {
+	s := strings.ToLower(string(body))
+	return strings.Contains(s, "json mode is not supported") ||
+		strings.Contains(s, "response_format") && strings.Contains(s, "not supported") ||
+		strings.Contains(s, `"code":20024`)
 }

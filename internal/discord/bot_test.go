@@ -45,6 +45,9 @@ func (s *fakeSession) InteractionRespond(i *discordgo.Interaction, r *discordgo.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.respCalls++
+	if r != nil && r.Data != nil && r.Data.Content != "" {
+		s.lastContent = r.Data.Content
+	}
 	return nil
 }
 func (s *fakeSession) InteractionResponseEdit(i *discordgo.Interaction, r *discordgo.WebhookEdit, _ ...discordgo.RequestOption) (*discordgo.Message, error) {
@@ -71,6 +74,15 @@ func mkInteraction(userID, mrURL string) *discordgo.Interaction {
 				{Name: "url", Type: discordgo.ApplicationCommandOptionString, Value: mrURL},
 			},
 		},
+	}
+}
+
+func mkPingInteraction(userID string) *discordgo.Interaction {
+	return &discordgo.Interaction{
+		ID: "iid", Token: "tok", AppID: "app",
+		Member: &discordgo.Member{User: &discordgo.User{ID: userID}, Roles: nil},
+		Type:   discordgo.InteractionApplicationCommand,
+		Data:   discordgo.ApplicationCommandInteractionData{Name: "ping"},
 	}
 }
 
@@ -125,6 +137,20 @@ func TestBot_RejectsDuplicate(t *testing.T) {
 
 	require.Equal(t, 1, sess.respCalls)
 	require.Equal(t, 0, sess.editCalls)
+}
+
+func TestBot_PingReplies(t *testing.T) {
+	sess := &fakeSession{}
+	tr := jobs.New()
+	runner := &fakeRunner{}
+	b := &Bot{Session: sess, Runner: runner, Jobs: tr, Validator: Validator{Tracker: tr}, TickEvery: time.Second, JobTimeout: time.Second}
+
+	b.HandleInteraction(mkPingInteraction("u1"))
+
+	require.Equal(t, 1, sess.respCalls, "ping must reply once")
+	require.Equal(t, 0, sess.editCalls, "ping must not edit")
+	require.False(t, runner.called, "ping must not invoke runner")
+	require.Contains(t, sess.lastContent, "pong")
 }
 
 func TestBot_RunnerError(t *testing.T) {

@@ -3,7 +3,9 @@ package review
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
+	"time"
 
 	"github.com/fahmi/gitlab-mr-review-bot/internal/chunker"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/classifier"
@@ -11,6 +13,10 @@ import (
 	"github.com/fahmi/gitlab-mr-review-bot/internal/gitlab"
 	"github.com/fahmi/gitlab-mr-review-bot/internal/llm"
 )
+
+// postTimeout caps each GitLab post (summary/discussion). Detached from job
+// ctx so partial results still emit when chunked review exhausts JobTimeout.
+const postTimeout = 30 * time.Second
 
 type Config struct {
 	GitLab        gitlab.Client
@@ -144,6 +150,8 @@ func (o *Orchestrator) RunWithProgress(ctx context.Context, mrURL string, progre
 			emit("reviewing", fmt.Sprintf("%d/%d chunks reviewed", done, total))
 			if err != nil {
 				failed++
+				log.Printf("review: chunk failed file=%s: %v", j.path, err)
+				emit("reviewing", fmt.Sprintf("chunk failed file=%s: %v", j.path, err))
 				return
 			}
 			for _, f := range resp.Findings {
@@ -173,7 +181,10 @@ func (o *Orchestrator) RunWithProgress(ctx context.Context, mrURL string, progre
 	}
 
 	emit("posting", "posting summary")
-	if err := o.cfg.GitLab.PostNote(ctx, ref.ProjectPath, ref.MRIID, agg.SummaryBody); err != nil {
+	postCtx, postCancel := context.WithTimeout(context.WithoutCancel(ctx), postTimeout)
+	err = o.cfg.GitLab.PostNote(postCtx, ref.ProjectPath, ref.MRIID, agg.SummaryBody)
+	postCancel()
+	if err != nil {
 		return nil, fmt.Errorf("post summary: %w", err)
 	}
 
@@ -194,7 +205,10 @@ func (o *Orchestrator) RunWithProgress(ctx context.Context, mrURL string, progre
 			NewPath: f.File, OldPath: f.File,
 			NewLine: f.Line, PositionType: "text",
 		}
-		if err := o.cfg.GitLab.PostDiscussion(ctx, ref.ProjectPath, ref.MRIID, body, pos); err != nil {
+		dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), postTimeout)
+		err := o.cfg.GitLab.PostDiscussion(dctx, ref.ProjectPath, ref.MRIID, body, pos)
+		dcancel()
+		if err != nil {
 			skipped++
 			continue
 		}

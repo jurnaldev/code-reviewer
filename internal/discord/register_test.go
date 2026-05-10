@@ -26,6 +26,8 @@ func TestRegisterCommands_PassesAppGuildAndDefinition(t *testing.T) {
 	require.NoError(t, RegisterCommands(s, "appid", "guildid"))
 	require.Equal(t, "appid", s.gotApp)
 	require.Equal(t, "guildid", s.gotGuild)
-	require.Len(t, s.gotCommands, 1)
-	require.Equal(t, "review", s.gotCommands[0].Name)
+	require.Len(t, s.gotCommands, 2)
+	names := []string{s.gotCommands[0].Name, s.gotCommands[1].Name}
+	require.Contains(t, names, "review")
+	require.Contains(t, names, "ping")
 }

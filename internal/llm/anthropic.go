@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 type AnthropicConfig struct {
@@ -83,7 +84,8 @@ func (a *Anthropic) Review(ctx context.Context, req ReviewRequest) (ReviewRespon
 		return ReviewResponse{}, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", a.cfg.BaseURL+"/v1/messages", bytes.NewReader(buf))
+	base := strings.TrimSuffix(strings.TrimRight(a.cfg.BaseURL, "/"), "/v1")
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", base+"/v1/messages", bytes.NewReader(buf))
 	if err != nil {
 		return ReviewResponse{}, err
 	}

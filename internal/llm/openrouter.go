@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 type OpenRouterConfig struct {
 	APIKey  string
 	Model   string
-	BaseURL string // default https://openrouter.ai/api
+	BaseURL string // default https://openrouter.ai/api ; trailing /v1 tolerated
 	HTTP    *http.Client
 	Referer string // optional HTTP-Referer header (OpenRouter app ranking)
 	Title   string // optional X-Title header
@@ -33,6 +34,13 @@ func NewOpenRouter(c OpenRouterConfig) *OpenRouter {
 }
 
 func (o *OpenRouter) Name() string { return "openrouter" }
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
 
 type openrouterMessage struct {
 	Role    string `json:"role"`
@@ -69,7 +77,8 @@ func (o *OpenRouter) Review(ctx context.Context, req ReviewRequest) (ReviewRespo
 		return ReviewResponse{}, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", o.cfg.BaseURL+"/v1/chat/completions", bytes.NewReader(buf))
+	base := strings.TrimSuffix(strings.TrimRight(o.cfg.BaseURL, "/"), "/v1")
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", bytes.NewReader(buf))
 	if err != nil {
 		return ReviewResponse{}, err
 	}
@@ -92,12 +101,15 @@ func (o *OpenRouter) Review(ctx context.Context, req ReviewRequest) (ReviewRespo
 		return ReviewResponse{}, fmt.Errorf("openrouter %d: %s", resp.StatusCode, string(rb))
 	}
 
+	if len(bytes.TrimSpace(rb)) == 0 {
+		return ReviewResponse{}, fmt.Errorf("openrouter: empty body (status %d, model=%s)", resp.StatusCode, o.cfg.Model)
+	}
 	var or openrouterResp
 	if err := json.Unmarshal(rb, &or); err != nil {
-		return ReviewResponse{}, fmt.Errorf("decode response: %w", err)
+		return ReviewResponse{}, fmt.Errorf("decode response (body=%q): %w", truncate(string(rb), 300), err)
 	}
 	if len(or.Choices) == 0 {
-		return ReviewResponse{}, fmt.Errorf("openrouter: empty choices")
+		return ReviewResponse{}, fmt.Errorf("openrouter: empty choices (body=%q)", truncate(string(rb), 300))
 	}
 	findings, err := ParseFindings(or.Choices[0].Message.Content)
 	if err != nil {

@@ -28,9 +28,22 @@ type Bot struct {
 	OnJobDone func()
 }
 
-// HandleInteraction dispatches the /review slash command. Replies are deferred
-// (Discord 3-second ack rule) and the message is edited as the job progresses.
+// HandleInteraction dispatches slash commands. /review is deferred and edited
+// as the job progresses (Discord 3-second ack rule). /ping replies immediately
+// with an ephemeral "pong" so callers can confirm the bot is online.
 func (b *Bot) HandleInteraction(i *discordgo.Interaction) {
+	switch commandName(i) {
+	case pingCommandName:
+		b.handlePing(i)
+		return
+	case reviewCommandName:
+		// fall through to review handling below
+	default:
+		// Unknown command: do nothing rather than ack so Discord shows the
+		// generic "interaction failed" — keeps misconfigured deployments visible.
+		return
+	}
+
 	mrURL, ok := extractURLOption(i)
 	if !ok {
 		b.replyEphemeral(i, "usage: /review url:<merge-request-url>")
@@ -138,6 +151,18 @@ func (b *Bot) replyEphemeral(i *discordgo.Interaction, content string) {
 			Flags:   discordgo.MessageFlagsEphemeral,
 		},
 	})
+}
+
+func (b *Bot) handlePing(i *discordgo.Interaction) {
+	b.replyEphemeral(i, ":white_check_mark: pong — bot online")
+}
+
+func commandName(i *discordgo.Interaction) string {
+	data, ok := i.Data.(discordgo.ApplicationCommandInteractionData)
+	if !ok {
+		return ""
+	}
+	return data.Name
 }
 
 func extractURLOption(i *discordgo.Interaction) (string, bool) {

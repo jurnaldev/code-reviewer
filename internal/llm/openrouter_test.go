@@ -117,3 +117,18 @@ func TestOpenRouter_DefaultBaseURL(t *testing.T) {
 	o := NewOpenRouter(OpenRouterConfig{APIKey: "k", Model: "m"})
 	require.Equal(t, "https://openrouter.ai/api", o.cfg.BaseURL)
 }
+
+func TestOpenRouter_BaseURLWithTrailingV1(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"findings\":[]}"}}],"usage":{}}`))
+	}))
+	defer srv.Close()
+
+	o := NewOpenRouter(OpenRouterConfig{APIKey: "k", Model: "m", BaseURL: srv.URL + "/api/v1", HTTP: srv.Client()})
+	_, err := o.Review(context.Background(), ReviewRequest{SystemPrompt: "s", FilePath: "p", DiffChunk: "d"})
+	require.NoError(t, err)
+	require.Equal(t, "/api/v1/chat/completions", gotPath, "must not double up /v1")
+}
